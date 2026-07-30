@@ -26,6 +26,7 @@ import os
 import time
 from typing import Any
 
+import httpx
 from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 from sentence_transformers import SentenceTransformer
@@ -37,11 +38,25 @@ ENCODE_BATCH_SIZE = 64
 MAX_ATTEMPTS_PER_SIZE = 3
 INITIAL_BACKOFF_SECONDS = 3.0
 
+# APIError: Postgres/PostgREST responded, but with an error (e.g. 57014
+# statement timeout, PGRST002 schema-cache issues). httpx.TransportError:
+# the client gave up before getting *any* response (e.g. ReadTimeout) --
+# distinct from APIError, so a bare `except APIError` misses it entirely.
+# Hit this in production: a batch survived three APIError retries, got
+# halved, and one of the halves still died on an uncaught ReadTimeout.
+RETRYABLE_EXCEPTIONS = (APIError, httpx.TransportError)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("vector_worker")
+
+
+def _describe(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, APIError):
+        return exc.code or "unknown", exc.message or str(exc)
+    return type(exc).__name__, str(exc)
 
 
 def _build_context(row: dict[str, Any]) -> str:
@@ -72,7 +87,8 @@ def _write_updates(supabase: Client, updates: list[dict[str, Any]]) -> None:
         try:
             supabase.rpc("bulk_update_embeddings", {"updates": updates}).execute()
             return
-        except APIError as exc:
+        except RETRYABLE_EXCEPTIONS as exc:
+            code, message = _describe(exc)
             attempt += 1
             if attempt > MAX_ATTEMPTS_PER_SIZE:
                 if len(updates) == 1:
@@ -86,7 +102,7 @@ def _write_updates(supabase: Client, updates: list[dict[str, Any]]) -> None:
                     "%s + %s and retrying",
                     len(updates),
                     attempt - 1,
-                    exc.code,
+                    code,
                     mid,
                     len(updates) - mid,
                 )
@@ -98,8 +114,8 @@ def _write_updates(supabase: Client, updates: list[dict[str, Any]]) -> None:
                 "bulk_update_embeddings failed (attempt %s/%s, code=%s): %s -- retrying in %ss",
                 attempt,
                 MAX_ATTEMPTS_PER_SIZE,
-                exc.code,
-                exc.message,
+                code,
+                message,
                 backoff,
             )
             time.sleep(backoff)
@@ -128,7 +144,8 @@ def _fetch_pending(supabase: Client, limit: int) -> list[dict[str, Any]]:
                 .execute()
             )
             return response.data or []
-        except APIError as exc:
+        except RETRYABLE_EXCEPTIONS as exc:
+            code, message = _describe(exc)
             attempt += 1
             if attempt > MAX_ATTEMPTS_PER_SIZE:
                 raise
@@ -137,8 +154,8 @@ def _fetch_pending(supabase: Client, limit: int) -> list[dict[str, Any]]:
                 "Fetching pending rows failed (attempt %s/%s, code=%s): %s -- retrying in %ss",
                 attempt,
                 MAX_ATTEMPTS_PER_SIZE,
-                exc.code,
-                exc.message,
+                code,
+                message,
                 backoff,
             )
             time.sleep(backoff)
