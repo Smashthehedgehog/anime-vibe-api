@@ -10,15 +10,14 @@ SentenceTransformers (`all-MiniLM-L6-v2`), Render (Blueprint deploy).
 
 ## Status
 
-Scaffolding only — directory structure and stubs are in place; each stage
-below still needs to be implemented.
+Stage 1 complete. Stages 2-5 are still stubs.
 
 ## Build stages
 
-1. **`sql/` + `ingestion/ingestion_worker.py`** — Supabase schema
-   (`media_metadata` table, `vector` extension) and an async worker that
-   paginates the AniList GraphQL API for all anime/manga and upserts
-   metadata (embedding left null).
+1. **DONE** — `supabase/migrations/` (schema: `media_metadata` table +
+   `vector` extension) and `ingestion/ingestion_worker.py`, an async worker
+   that paginates the AniList GraphQL API for all anime/manga (50/page) and
+   upserts metadata into Supabase (embedding left null).
 2. **`ingestion/vector_worker.py` + `sql/`** — batch-embeds rows missing a
    vector using `all-MiniLM-L6-v2`, writes them back to Supabase, and adds
    the `match_media` Postgres function (cosine similarity + popularity,
@@ -42,8 +41,29 @@ cp .env.example .env   # fill in Supabase credentials
 pip install -r requirements.txt
 ```
 
-Run the SQL in `sql/` against your Supabase project (SQL Editor) before
-running either worker.
+### Apply the schema (Supabase CLI)
+
+This repo uses `supabase/migrations/` rather than pasting SQL into the
+dashboard. From the repo root:
+
+```bash
+npx supabase login                      # one-time browser auth
+npx supabase link --project-ref <ref>   # find <ref> in your project's URL/settings
+npx supabase db push                    # applies supabase/migrations/*.sql
+```
+
+(`link`/`push` need your own Supabase login, so this step is on you — an
+agent shouldn't hold your account credentials.)
+
+### Run the ingestion worker
+
+```bash
+python ingestion/ingestion_worker.py
+```
+
+Paginates all AniList anime + manga and upserts them into `media_metadata`.
+Expect this to take a while — AniList has tens of thousands of entries and
+the worker throttles itself against their rate limit.
 
 ## Environment variables
 

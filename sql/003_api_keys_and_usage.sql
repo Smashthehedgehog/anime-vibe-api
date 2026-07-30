@@ -1,3 +1,0 @@
--- Stage 4: portfolio API key management
--- TODO: api_keys(id, key_hash sha256, owner, created_at) and
--- api_usage_logs(id, api_key_id, endpoint, created_at) for rate limiting.
