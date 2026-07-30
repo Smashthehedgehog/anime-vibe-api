@@ -10,7 +10,7 @@ SentenceTransformers (`all-MiniLM-L6-v2`), Render (Blueprint deploy).
 
 ## Status
 
-Stages 1-2 complete. Stages 3-5 are still stubs.
+Stages 1-3 complete. Stages 4-5 are still stubs.
 
 ## Build stages
 
@@ -23,10 +23,14 @@ Stages 1-2 complete. Stages 3-5 are still stubs.
    `supabase/migrations/` adds the `match_media` Postgres function (cosine
    similarity + log-normalized popularity) and an HNSW index on
    `embedding` for hybrid search.
-3. **`app/app.py`, `app/mcp_server.py`, `app/schemas.py`** — FastAPI service
-   exposing `POST /api/v1/search/vibe` (REST) and an MCP server
-   (`search_anime_manga_vibes` tool) mounted over SSE on the same instance.
-   Model loaded once at startup via FastAPI `lifespan`.
+3. **DONE** — `app/app.py` (FastAPI service exposing `POST
+   /api/v1/search/vibe`), `app/mcp_server.py` (MCP server exposing the
+   same search as the `search_anime_manga_vibes` tool, mounted over SSE
+   at `/sse` + `/messages/`), `app/search.py` (shared search logic so
+   REST and MCP can never disagree), and `app/state.py` (the
+   SentenceTransformer + Supabase client, loaded once at startup via
+   FastAPI's `lifespan`). See [docs/MCP.md](docs/MCP.md) for how to
+   connect an MCP client to this server.
 4. **`app/auth.py`** — API key issuance/validation (SHA-256 hashed in
    Supabase) and per-key rate limiting via a usage-log table, applied to
    both the REST routes and the MCP SSE connection.
@@ -84,6 +88,28 @@ Supabase SQL editor or via the client library's `.rpc("match_media", ...)`
 with a 384-dim `query_embedding` array, an optional `match_threshold`
 (default `0.3`), `match_count` (default `10`), and `media_type`
 (`'ANIME'`/`'MANGA'`/omit for both).
+
+### Run the API server
+
+```bash
+uvicorn app.app:app --reload
+```
+
+Serves:
+
+- `POST /api/v1/search/vibe` — REST search (`{"query": ..., "limit": 10, "type": "ALL"}`)
+- `GET /sse` + `POST /messages/` — MCP server (SSE transport), tool
+  `search_anime_manga_vibes`. See [docs/MCP.md](docs/MCP.md) for how to
+  connect a client and why it's shaped this way.
+- `GET /healthz` — readiness check (`{"status": "ok"}` once the
+  embedding model and Supabase client have finished loading)
+- `GET /docs` — interactive OpenAPI docs for the REST surface
+
+CORS is locked down to the origins listed in `CORS_ALLOWED_ORIGINS`
+(comma-separated) — set that in `.env` before testing from a browser.
+
+**No auth yet** — stage 4 adds API-key + rate-limit enforcement in front
+of both the REST and MCP routes. Don't deploy this publicly before then.
 
 ## Environment variables
 
