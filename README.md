@@ -10,7 +10,7 @@ SentenceTransformers (`all-MiniLM-L6-v2`), Render (Blueprint deploy).
 
 ## Status
 
-Stages 1-4 complete. Stage 5 is still a stub.
+All 5 stages complete.
 
 ## Build stages
 
@@ -38,10 +38,13 @@ Stages 1-4 complete. Stage 5 is still a stub.
    the mounted MCP app has no FastAPI route to attach a dependency to).
    `POST /api/v1/keys/generate` issues new keys, gated by
    `ADMIN_MASTER_TOKEN`. See [docs/AUTH.md](docs/AUTH.md).
-5. **`Dockerfile`, `render.yaml`, `build.sh`** — containerizes the service
-   (pre-downloading model weights at build time) and defines a Render
-   Blueprint: the web service plus a weekly cron job that re-runs the
-   ingestion and vectorization workers.
+5. **DONE** — `Dockerfile` + `build.sh` pre-download `all-MiniLM-L6-v2`
+   weights at build time and set `HF_HUB_OFFLINE=1` for the runtime
+   container, so startup makes zero network calls to Hugging Face (see
+   [docs/DEPLOY.md](docs/DEPLOY.md) for why that matters and how it was
+   verified). `render.yaml` defines the Blueprint: the always-on web
+   service plus a cron job that re-runs `ingestion_worker.py` then
+   `vector_worker.py` every Sunday at 02:00 UTC, reusing the same image.
 
 ## Local setup
 
@@ -128,6 +131,19 @@ curl -X POST http://127.0.0.1:8000/api/v1/keys/generate \
 The `api_key` in the response is shown once — save it. Full details
 (revoking keys, how the rate limit is computed, why a shared admin token
 instead of full user auth) are in [docs/AUTH.md](docs/AUTH.md).
+
+## Deploying
+
+```bash
+docker build -t anime-vibe-api .
+```
+
+builds the production image locally (installs deps, bakes in the
+embedding model weights). Deploying is via a Render Blueprint
+(`render.yaml`) — connect this repo in the Render dashboard and it
+provisions the web service + weekly refresh cron job together. See
+[docs/DEPLOY.md](docs/DEPLOY.md) for the full walkthrough, including why
+the container is forced fully offline (`HF_HUB_OFFLINE=1`) at runtime.
 
 ## Environment variables
 

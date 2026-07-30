@@ -1,0 +1,6 @@
+# build.sh runs inside a Linux container via the Dockerfile; a CRLF
+# checkout (the Windows git default, core.autocrlf=true) breaks its
+# shebang with a "bad interpreter" error. Force LF regardless of the
+# cloning machine's line-ending settings.
+*.sh text eol=lf
+Dockerfile text eol=lf

@@ -1,6 +1,53 @@
-# Stage 5: Render Blueprint
-# TODO:
-# - web service running the Docker image (uvicorn app.app:app)
-# - cron job: ingestion_worker.py && vector_worker.py, Sundays 02:00 UTC
-# - envVars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ADMIN_MASTER_TOKEN,
-#   CORS_ALLOWED_ORIGINS (sync: false for secrets)
+# Render Blueprint. Connect this repo in the Render dashboard (New +
+# -> Blueprint) and it provisions both services below from this file.
+#
+# Two services share one Docker image (see Dockerfile):
+#   - `anime-vibe-api`: the FastAPI + MCP server, always running.
+#   - `anime-vibe-refresh`: a cron job that re-runs the ingestion and
+#     vectorization workers weekly, overriding the image's default CMD
+#     via `dockerCommand` instead of starting uvicorn.
+#
+# Secrets (`sync: false`) are intentionally left out of this file --
+# Render prompts for them once in the dashboard on first deploy and
+# stores them there, so nothing sensitive ends up committed to git.
+
+services:
+  - name: anime-vibe-api
+    type: web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    region: oregon
+    healthCheckPath: /healthz
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ADMIN_MASTER_TOKEN
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: EMBEDDING_MODEL_NAME
+        value: all-MiniLM-L6-v2
+
+  - name: anime-vibe-refresh
+    type: cron
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    region: oregon
+    # Sundays at 02:00 UTC. Standard 5-field cron; Render evaluates it in
+    # UTC. Re-runs ingestion (new/changed AniList titles) then
+    # vectorization (embeds whatever ingestion just added).
+    schedule: "0 2 * * 0"
+    dockerCommand: sh -c "python ingestion/ingestion_worker.py && python ingestion/vector_worker.py"
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: EMBEDDING_MODEL_NAME
+        value: all-MiniLM-L6-v2

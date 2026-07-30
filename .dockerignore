@@ -1,0 +1,13 @@
+# Keeps `COPY . .` in the Dockerfile from baking in git history or a
+# locally-checked-out .env with real secrets.
+.git/
+.github/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+.DS_Store
