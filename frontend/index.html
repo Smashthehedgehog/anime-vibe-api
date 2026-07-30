@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Anime Vibe Search -- test client</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8e9ec;
+    --muted: #9aa0ac;
+    --accent: #7c9cff;
+    --anime: #7c9cff;
+    --manga: #ff9c7c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem 1rem 4rem;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  p.sub { color: var(--muted); margin-top: 0; margin-bottom: 1.5rem; font-size: 0.9rem; }
+
+  form {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: grid;
+    gap: 0.9rem;
+  }
+  label { font-size: 0.8rem; color: var(--muted); display: block; margin-bottom: 0.3rem; }
+  input, select, textarea {
+    width: 100%;
+    background: #0f1115;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.6rem 0.7rem;
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 3rem; }
+  .row { display: grid; grid-template-columns: 1fr 140px 100px; gap: 0.75rem; }
+  @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
+
+  button {
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    border-radius: 8px;
+    padding: 0.7rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+
+  #status { margin: 1rem 0; font-size: 0.9rem; color: var(--muted); min-height: 1.2em; }
+  #status.error { color: #ff6b6b; }
+
+  #results { display: grid; gap: 0.9rem; margin-top: 1rem; }
+  .card {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    gap: 0.9rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.9rem;
+  }
+  .card img { width: 72px; height: 100px; object-fit: cover; border-radius: 6px; background: #0f1115; }
+  .card .noimg { width: 72px; height: 100px; border-radius: 6px; background: #0f1115; }
+  .card h3 { margin: 0 0 0.25rem; font-size: 1rem; }
+  .badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-right: 0.4rem;
+    text-transform: uppercase;
+  }
+  .badge.anime { background: rgba(124,156,255,0.18); color: var(--anime); }
+  .badge.manga { background: rgba(255,156,124,0.18); color: var(--manga); }
+  .meta { color: var(--muted); font-size: 0.78rem; margin: 0.2rem 0 0.4rem; }
+  .synopsis { font-size: 0.85rem; color: var(--text); opacity: 0.85; margin: 0; line-height: 1.4; }
+  .tags { margin-top: 0.4rem; font-size: 0.72rem; color: var(--muted); }
+  .score { font-size: 0.72rem; color: var(--muted); float: right; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Anime / Manga Vibe Search</h1>
+  <p class="sub">Test client for the local anime-vibe-api server. Describe a mood, theme, or vibe -- not a title.</p>
+
+  <form id="search-form">
+    <div>
+      <label for="api-key">X-API-Key</label>
+      <input id="api-key" type="text" placeholder="paste an API key" autocomplete="off" />
+    </div>
+    <div>
+      <label for="query">Vibe</label>
+      <textarea id="query" placeholder="e.g. a hopeful post-apocalyptic story about rebuilding">a cozy slow-burn romance with found family themes</textarea>
+    </div>
+    <div class="row">
+      <div>
+        <label for="api-base">API base URL</label>
+        <input id="api-base" type="text" value="http://127.0.0.1:8000" />
+      </div>
+      <div>
+        <label for="type">Type</label>
+        <select id="type">
+          <option value="ALL">ALL</option>
+          <option value="ANIME">ANIME</option>
+          <option value="MANGA">MANGA</option>
+        </select>
+      </div>
+      <div>
+        <label for="limit">Limit</label>
+        <input id="limit" type="number" min="1" max="50" value="10" />
+      </div>
+    </div>
+    <button type="submit" id="submit-btn">Search</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="results"></div>
+</main>
+
+<script>
+const form = document.getElementById("search-form");
+const statusEl = document.getElementById("status");
+const resultsEl = document.getElementById("results");
+const submitBtn = document.getElementById("submit-btn");
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s ?? "";
+  return div.innerHTML;
+}
+
+function renderResults(data) {
+  resultsEl.innerHTML = "";
+  if (!data.results.length) {
+    resultsEl.innerHTML = '<p style="color:var(--muted)">No matches.</p>';
+    return;
+  }
+  for (const r of data.results) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const img = r.cover_image_url
+      ? `<img src="${escapeHtml(r.cover_image_url)}" alt="" loading="lazy" />`
+      : `<div class="noimg"></div>`;
+
+    const badgeClass = r.type === "ANIME" ? "anime" : "manga";
+    const synopsis = r.synopsis
+      ? escapeHtml(r.synopsis.length > 220 ? r.synopsis.slice(0, 220) + "..." : r.synopsis)
+      : '<span style="opacity:0.5">No synopsis.</span>';
+    const tags = [...(r.genres || []), ...(r.tags || [])].slice(0, 8).join(" · ");
+
+    card.innerHTML = `
+      ${img}
+      <div>
+        <span class="score">score ${r.score.toFixed(3)}</span>
+        <h3><span class="badge ${badgeClass}">${r.type}</span>${escapeHtml(r.title_english || "(untitled)")}</h3>
+        <div class="meta">popularity ${r.popularity} &middot; similarity ${r.similarity.toFixed(3)}</div>
+        <p class="synopsis">${synopsis}</p>
+        ${tags ? `<div class="tags">${escapeHtml(tags)}</div>` : ""}
+      </div>
+    `;
+    resultsEl.appendChild(card);
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const apiBase = document.getElementById("api-base").value.trim().replace(/\/$/, "");
+  const apiKey = document.getElementById("api-key").value.trim();
+  const query = document.getElementById("query").value.trim();
+  const type = document.getElementById("type").value;
+  const limit = parseInt(document.getElementById("limit").value, 10) || 10;
+
+  if (!apiKey) {
+    statusEl.textContent = "Enter an API key first.";
+    statusEl.className = "error";
+    return;
+  }
+  if (!query) {
+    statusEl.textContent = "Enter a query.";
+    statusEl.className = "error";
+    return;
+  }
+
+  submitBtn.disabled = true;
+  statusEl.className = "";
+  statusEl.textContent = "Searching...";
+  resultsEl.innerHTML = "";
+
+  const started = performance.now();
+  try {
+    const res = await fetch(`${apiBase}/api/v1/search/vibe`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": apiKey,
+      },
+      body: JSON.stringify({ query, type, limit }),
+    });
+
+    const elapsed = ((performance.now() - started) / 1000).toFixed(2);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      statusEl.className = "error";
+      statusEl.textContent = `${res.status} ${res.statusText}: ${body.detail || "request failed"}`;
+      return;
+    }
+
+    const data = await res.json();
+    statusEl.className = "";
+    statusEl.textContent = `${data.count} result(s) in ${elapsed}s`;
+    renderResults(data);
+  } catch (err) {
+    statusEl.className = "error";
+    statusEl.textContent = `Network error: ${err.message}. Is the server running and is this origin in CORS_ALLOWED_ORIGINS?`;
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

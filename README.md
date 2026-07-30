@@ -117,6 +117,22 @@ Serves:
 CORS is locked down to the origins listed in `CORS_ALLOWED_ORIGINS`
 (comma-separated) — set that in `.env` before testing from a browser.
 
+### Test frontend
+
+A minimal, dependency-free HTML/JS client for manually exercising
+`POST /api/v1/search/vibe` lives in [frontend/index.html](frontend/index.html).
+It's a plain static file — no build step. Serve it as real HTTP (not
+`file://`, which CORS handles inconsistently across browsers):
+
+```bash
+cd frontend && python -m http.server 3000
+```
+
+Add `http://localhost:3000` to `CORS_ALLOWED_ORIGINS` and restart the API
+server (CORS origins are read once at startup), then open
+`http://localhost:3000`. Paste in an API key (see below), type a vibe,
+and hit Search.
+
 ### Issuing an API key
 
 ```bash
