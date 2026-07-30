@@ -10,7 +10,7 @@ SentenceTransformers (`all-MiniLM-L6-v2`), Render (Blueprint deploy).
 
 ## Status
 
-Stages 1-3 complete. Stages 4-5 are still stubs.
+Stages 1-4 complete. Stage 5 is still a stub.
 
 ## Build stages
 
@@ -31,9 +31,13 @@ Stages 1-3 complete. Stages 4-5 are still stubs.
    SentenceTransformer + Supabase client, loaded once at startup via
    FastAPI's `lifespan`). See [docs/MCP.md](docs/MCP.md) for how to
    connect an MCP client to this server.
-4. **`app/auth.py`** — API key issuance/validation (SHA-256 hashed in
-   Supabase) and per-key rate limiting via a usage-log table, applied to
-   both the REST routes and the MCP SSE connection.
+4. **DONE** — `app/auth.py`: API key validation (SHA-256 hashed in
+   Supabase's `api_keys` table) and per-key rate limiting via
+   `api_usage_logs`, enforced on both the REST route (a FastAPI
+   `Depends()`) and the MCP `/sse` connection (an ASGI-level guard, since
+   the mounted MCP app has no FastAPI route to attach a dependency to).
+   `POST /api/v1/keys/generate` issues new keys, gated by
+   `ADMIN_MASTER_TOKEN`. See [docs/AUTH.md](docs/AUTH.md).
 5. **`Dockerfile`, `render.yaml`, `build.sh`** — containerizes the service
    (pre-downloading model weights at build time) and defines a Render
    Blueprint: the web service plus a weekly cron job that re-runs the
@@ -97,19 +101,33 @@ uvicorn app.app:app --reload
 
 Serves:
 
-- `POST /api/v1/search/vibe` — REST search (`{"query": ..., "limit": 10, "type": "ALL"}`)
+- `POST /api/v1/search/vibe` — REST search (`{"query": ..., "limit": 10, "type": "ALL"}`), requires `X-API-Key`
 - `GET /sse` + `POST /messages/` — MCP server (SSE transport), tool
-  `search_anime_manga_vibes`. See [docs/MCP.md](docs/MCP.md) for how to
-  connect a client and why it's shaped this way.
+  `search_anime_manga_vibes`, requires `X-API-Key`. See
+  [docs/MCP.md](docs/MCP.md) for how to connect a client.
+- `POST /api/v1/keys/generate` — issue a new API key, requires
+  `X-Admin-Token: $ADMIN_MASTER_TOKEN`. See [docs/AUTH.md](docs/AUTH.md).
 - `GET /healthz` — readiness check (`{"status": "ok"}` once the
-  embedding model and Supabase client have finished loading)
-- `GET /docs` — interactive OpenAPI docs for the REST surface
+  embedding model and Supabase client have finished loading), no auth
+- `GET /docs` — interactive OpenAPI docs for the REST surface, no auth
 
 CORS is locked down to the origins listed in `CORS_ALLOWED_ORIGINS`
 (comma-separated) — set that in `.env` before testing from a browser.
 
-**No auth yet** — stage 4 adds API-key + rate-limit enforcement in front
-of both the REST and MCP routes. Don't deploy this publicly before then.
+### Issuing an API key
+
+```bash
+export ADMIN_MASTER_TOKEN=...   # same value the running server has
+
+curl -X POST http://127.0.0.1:8000/api/v1/keys/generate \
+  -H "X-Admin-Token: $ADMIN_MASTER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"owner_label": "me", "rate_limit_per_hour": 60}'
+```
+
+The `api_key` in the response is shown once — save it. Full details
+(revoking keys, how the rate limit is computed, why a shared admin token
+instead of full user auth) are in [docs/AUTH.md](docs/AUTH.md).
 
 ## Environment variables
 

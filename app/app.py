@@ -24,13 +24,19 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sentence_transformers import SentenceTransformer
 from supabase import create_client
 
+from app.auth import ApiKeyASGIGuard, ApiKeyRecord, create_api_key, require_admin, require_api_key
 from app.mcp_server import mcp
-from app.schemas import VibeSearchRequest, VibeSearchResponse
+from app.schemas import (
+    GenerateKeyRequest,
+    GenerateKeyResponse,
+    VibeSearchRequest,
+    VibeSearchResponse,
+)
 from app.search import vibe_search
 from app.state import state
 
@@ -93,7 +99,7 @@ app.add_middleware(
     allow_origins=_allowed_origins,
     allow_credentials=False,
     allow_methods=["POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Admin-Token"],
 )
 
 
@@ -103,7 +109,9 @@ async def healthz() -> dict:
 
 
 @app.post("/api/v1/search/vibe", response_model=VibeSearchResponse, tags=["search"])
-async def search_vibe(request: VibeSearchRequest) -> VibeSearchResponse:
+async def search_vibe(
+    request: VibeSearchRequest, _key: ApiKeyRecord = Depends(require_api_key)
+) -> VibeSearchResponse:
     """Semantic vibe search over anime/manga.
 
     Embeds `query`, calls the `match_media` Postgres RPC, and returns
@@ -111,6 +119,9 @@ async def search_vibe(request: VibeSearchRequest) -> VibeSearchResponse:
     is the REST twin of the MCP tool `search_anime_manga_vibes` in
     mcp_server.py -- both call the same vibe_search() helper (search.py),
     so they always agree.
+
+    Requires a valid `X-API-Key` header (see auth.py); `require_api_key`
+    also enforces that key's per-hour rate limit before this body runs.
     """
     try:
         results = await vibe_search(
@@ -120,6 +131,33 @@ async def search_vibe(request: VibeSearchRequest) -> VibeSearchResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return VibeSearchResponse(query=request.query, count=len(results), results=results)
+
+
+@app.post(
+    "/api/v1/keys/generate",
+    response_model=GenerateKeyResponse,
+    tags=["admin"],
+    dependencies=[Depends(require_admin)],
+)
+async def generate_key(request: GenerateKeyRequest) -> GenerateKeyResponse:
+    """Provision a new API key. Requires `X-Admin-Token: $ADMIN_MASTER_TOKEN`.
+
+    Meant to be called from your own signup/provisioning flow (e.g. a
+    server-side handler on your portfolio site when a visitor requests a
+    demo key), not directly from public frontend JavaScript -- doing that
+    would ship ADMIN_MASTER_TOKEN to every visitor's browser, which
+    defeats the point of gating this endpoint at all. For a
+    fully-public "click to get a key" flow, swap `require_admin` for
+    Supabase Auth JWT verification instead.
+    """
+    raw_key = await create_api_key(
+        owner_label=request.owner_label, rate_limit_per_hour=request.rate_limit_per_hour
+    )
+    return GenerateKeyResponse(
+        api_key=raw_key,
+        owner_label=request.owner_label,
+        rate_limit_per_hour=request.rate_limit_per_hour,
+    )
 
 
 # --- MCP mount ---------------------------------------------------------
@@ -132,6 +170,12 @@ async def search_vibe(request: VibeSearchRequest) -> VibeSearchResponse:
 # Mounting at "/" makes those routes resolve to exactly /sse and
 # /messages/ at the app's root, matching what's documented for clients
 # in docs/MCP.md. The routes declared above (/healthz,
-# /api/v1/search/vibe) are registered on `app` directly and are matched
-# before falling through to this mount, so there's no collision.
-app.mount("/", mcp.sse_app())
+# /api/v1/search/vibe, /api/v1/keys/generate) are registered on `app`
+# directly and are matched before falling through to this mount, so
+# there's no collision.
+#
+# ApiKeyASGIGuard wraps the mounted sub-app with the same X-API-Key
+# check `require_api_key` does for REST -- see auth.py's module
+# docstring for why the MCP surface needs a different enforcement
+# mechanism than a FastAPI Depends().
+app.mount("/", ApiKeyASGIGuard(mcp.sse_app()))

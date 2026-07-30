@@ -57,3 +57,21 @@ class VibeSearchResponse(BaseModel):
     query: str
     count: int
     results: list[MediaResult]
+
+
+class GenerateKeyRequest(BaseModel):
+    owner_label: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Human-readable label for who/what this key is for, e.g. an email address or portfolio visitor name.",
+    )
+    rate_limit_per_hour: int = Field(
+        60, ge=1, le=10_000, description="Requests this key may make per trailing 60-minute window."
+    )
+
+
+class GenerateKeyResponse(BaseModel):
+    api_key: str = Field(description="The raw key. Shown once, here -- it is never stored or retrievable again.")
+    owner_label: str
+    rate_limit_per_hour: int

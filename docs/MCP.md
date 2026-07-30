@@ -44,10 +44,12 @@ the client is the `/sse` endpoint.
 Local dev: `http://127.0.0.1:8000/sse`
 Deployed (stage 5): `https://<your-render-service>.onrender.com/sse`
 
-> **No auth yet.** As of stage 3, `/sse` and `/messages/` are open to
-> anyone with the URL. Stage 4 adds an `X-API-Key` requirement in front
-> of both the REST and MCP surfaces — don't point real/public traffic at
-> a deployment before that lands.
+> **Auth required.** As of stage 4, every connection to `/sse` must carry
+> a valid `X-API-Key` header — `app/auth.py`'s `ApiKeyASGIGuard` checks it
+> before the SSE stream even opens, so a missing or invalid key gets a
+> `401` instead of a working connection. Get a key from someone with
+> `ADMIN_MASTER_TOKEN` (see [README](../README.md#issuing-an-api-key)) —
+> there's no self-serve signup yet.
 
 ## Connecting a client
 
@@ -62,7 +64,10 @@ SSE (sometimes labeled "remote"/"HTTP" server, as opposed to a local
   "mcpServers": {
     "anime-vibe-search": {
       "transport": "sse",
-      "url": "http://127.0.0.1:8000/sse"
+      "url": "http://127.0.0.1:8000/sse",
+      "headers": {
+        "X-API-Key": "<your key>"
+      }
     }
   }
 }
@@ -70,9 +75,11 @@ SSE (sometimes labeled "remote"/"HTTP" server, as opposed to a local
 
 Consult your specific client's docs for the exact key names — some
 clients call this a "remote server" or "connector" rather than exposing
-raw transport/url fields. The important part is: transport is SSE, and
-the URL is this server's `/sse` path (not `/messages/`, which the client
-manages internally).
+raw transport/url fields, and not all of them support setting custom
+headers on an SSE connection. If yours doesn't, use Option B, or a
+reverse proxy that injects the header. The important part is: transport
+is SSE, the URL is this server's `/sse` path (not `/messages/`, which
+the client manages internally), and the header carries your key.
 
 ### Option B — the official Python `mcp` SDK (for testing / scripting)
 
@@ -82,9 +89,13 @@ import asyncio
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
+API_KEY = "<your key>"  # see README: issuing an API key
+
 
 async def main():
-    async with sse_client("http://127.0.0.1:8000/sse") as (read, write):
+    async with sse_client(
+        "http://127.0.0.1:8000/sse", headers={"X-API-Key": API_KEY}
+    ) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
