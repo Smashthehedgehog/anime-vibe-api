@@ -28,6 +28,26 @@
   h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
   p.sub { color: var(--muted); margin-top: 0; margin-bottom: 1.5rem; font-size: 0.9rem; }
 
+  .method-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .method-toggle label {
+    display: block;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.75rem 0.9rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .method-toggle label.active { border-color: var(--accent); background: rgba(124,156,255,0.08); }
+  .method-toggle input { display: none; }
+  .method-toggle strong { display: block; font-size: 0.9rem; margin-bottom: 0.15rem; }
+  .method-toggle span { color: var(--muted); font-size: 0.78rem; }
+
   form {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -76,6 +96,7 @@
     border-radius: 10px;
     padding: 0.9rem;
   }
+  .card.highlight { border-color: var(--accent); }
   .card img { width: 72px; height: 100px; object-fit: cover; border-radius: 6px; background: #0f1115; }
   .card .noimg { width: 72px; height: 100px; border-radius: 6px; background: #0f1115; }
   .card h3 { margin: 0 0 0.25rem; font-size: 1rem; }
@@ -95,12 +116,49 @@
   .synopsis { font-size: 0.85rem; color: var(--text); opacity: 0.85; margin: 0; line-height: 1.4; }
   .tags { margin-top: 0.4rem; font-size: 0.72rem; color: var(--muted); }
   .score { font-size: 0.72rem; color: var(--muted); float: right; }
+
+  .explanation {
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 1rem;
+    font-size: 0.92rem;
+    line-height: 1.5;
+    margin-bottom: 0.9rem;
+  }
+  .explanation .label {
+    display: block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+  }
+  .trace {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 0.6rem;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>Anime / Manga Vibe Search</h1>
   <p class="sub">Test client for the local anime-vibe-api server. Describe a mood, theme, or vibe -- not a title.</p>
+
+  <div class="method-toggle">
+    <label id="method-1-label" class="active">
+      <input type="radio" name="method" value="search" checked />
+      <strong>Direct search</strong>
+      <span>Ranked list from cosine similarity + popularity. Deterministic, no LLM.</span>
+    </label>
+    <label id="method-2-label">
+      <input type="radio" name="method" value="recommend" />
+      <strong>AI recommendation</strong>
+      <span>A Groq-powered agent calls the MCP search tool itself and picks one, with reasoning.</span>
+    </label>
+  </div>
 
   <form id="search-form">
     <div>
@@ -124,7 +182,7 @@
           <option value="MANGA">MANGA</option>
         </select>
       </div>
-      <div>
+      <div id="limit-field">
         <label for="limit">Limit</label>
         <input id="limit" type="number" min="1" max="50" value="10" />
       </div>
@@ -141,6 +199,24 @@ const form = document.getElementById("search-form");
 const statusEl = document.getElementById("status");
 const resultsEl = document.getElementById("results");
 const submitBtn = document.getElementById("submit-btn");
+const limitField = document.getElementById("limit-field");
+const method1Label = document.getElementById("method-1-label");
+const method2Label = document.getElementById("method-2-label");
+const methodRadios = document.querySelectorAll('input[name="method"]');
+
+function currentMethod() {
+  return document.querySelector('input[name="method"]:checked').value;
+}
+
+function updateMethodUI() {
+  const method = currentMethod();
+  method1Label.classList.toggle("active", method === "search");
+  method2Label.classList.toggle("active", method === "recommend");
+  limitField.style.display = method === "recommend" ? "none" : "";
+  submitBtn.textContent = method === "recommend" ? "Ask the agent" : "Search";
+}
+methodRadios.forEach((r) => r.addEventListener("change", updateMethodUI));
+updateMethodUI();
 
 function escapeHtml(s) {
   const div = document.createElement("div");
@@ -148,27 +224,18 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-function renderResults(data) {
-  resultsEl.innerHTML = "";
-  if (!data.results.length) {
-    resultsEl.innerHTML = '<p style="color:var(--muted)">No matches.</p>';
-    return;
-  }
-  for (const r of data.results) {
-    const card = document.createElement("div");
-    card.className = "card";
+function mediaCardHtml(r, { highlight = false } = {}) {
+  const img = r.cover_image_url
+    ? `<img src="${escapeHtml(r.cover_image_url)}" alt="" loading="lazy" />`
+    : `<div class="noimg"></div>`;
+  const badgeClass = r.type === "ANIME" ? "anime" : "manga";
+  const synopsis = r.synopsis
+    ? escapeHtml(r.synopsis.length > 220 ? r.synopsis.slice(0, 220) + "..." : r.synopsis)
+    : '<span style="opacity:0.5">No synopsis.</span>';
+  const tags = [...(r.genres || []), ...(r.tags || [])].slice(0, 8).join(" · ");
 
-    const img = r.cover_image_url
-      ? `<img src="${escapeHtml(r.cover_image_url)}" alt="" loading="lazy" />`
-      : `<div class="noimg"></div>`;
-
-    const badgeClass = r.type === "ANIME" ? "anime" : "manga";
-    const synopsis = r.synopsis
-      ? escapeHtml(r.synopsis.length > 220 ? r.synopsis.slice(0, 220) + "..." : r.synopsis)
-      : '<span style="opacity:0.5">No synopsis.</span>';
-    const tags = [...(r.genres || []), ...(r.tags || [])].slice(0, 8).join(" · ");
-
-    card.innerHTML = `
+  return `
+    <div class="card${highlight ? " highlight" : ""}">
       ${img}
       <div>
         <span class="score">score ${r.score.toFixed(3)}</span>
@@ -177,13 +244,41 @@ function renderResults(data) {
         <p class="synopsis">${synopsis}</p>
         ${tags ? `<div class="tags">${escapeHtml(tags)}</div>` : ""}
       </div>
-    `;
-    resultsEl.appendChild(card);
+    </div>
+  `;
+}
+
+function renderSearchResults(data) {
+  if (!data.results.length) {
+    resultsEl.innerHTML = '<p style="color:var(--muted)">No matches.</p>';
+    return;
   }
+  resultsEl.innerHTML = data.results.map((r) => mediaCardHtml(r)).join("");
+}
+
+function renderRecommendation(data) {
+  const traceLines = (data.tool_calls || [])
+    .map((tc) => `${tc.tool}(${JSON.stringify(tc.arguments)})`)
+    .join("\n");
+
+  const explanationHtml = `
+    <div class="explanation">
+      <span class="label">Agent's pick</span>
+      ${escapeHtml(data.explanation)}
+      ${traceLines ? `<div class="trace">${escapeHtml(traceLines)}</div>` : ""}
+    </div>
+  `;
+
+  const mediaHtml = data.media
+    ? mediaCardHtml(data.media, { highlight: true })
+    : '<p style="color:var(--muted)">The agent didn\'t settle on a specific title from its search.</p>';
+
+  resultsEl.innerHTML = explanationHtml + mediaHtml;
 }
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+  const method = currentMethod();
   const apiBase = document.getElementById("api-base").value.trim().replace(/\/$/, "");
   const apiKey = document.getElementById("api-key").value.trim();
   const query = document.getElementById("query").value.trim();
@@ -203,33 +298,42 @@ form.addEventListener("submit", async (e) => {
 
   submitBtn.disabled = true;
   statusEl.className = "";
-  statusEl.textContent = "Searching...";
+  statusEl.textContent = method === "recommend" ? "Asking the agent (this calls an LLM + the MCP tool)..." : "Searching...";
   resultsEl.innerHTML = "";
 
   const started = performance.now();
   try {
-    const res = await fetch(`${apiBase}/api/v1/search/vibe`, {
+    const endpoint = method === "recommend" ? "/api/v1/recommend" : "/api/v1/search/vibe";
+    const body = method === "recommend" ? { vibe: query, type } : { query, type, limit };
+
+    const res = await fetch(`${apiBase}${endpoint}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-API-Key": apiKey,
       },
-      body: JSON.stringify({ query, type, limit }),
+      body: JSON.stringify(body),
     });
 
     const elapsed = ((performance.now() - started) / 1000).toFixed(2);
 
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
+      const errBody = await res.json().catch(() => ({}));
       statusEl.className = "error";
-      statusEl.textContent = `${res.status} ${res.statusText}: ${body.detail || "request failed"}`;
+      statusEl.textContent = `${res.status} ${res.statusText}: ${errBody.detail || "request failed"}`;
       return;
     }
 
     const data = await res.json();
     statusEl.className = "";
-    statusEl.textContent = `${data.count} result(s) in ${elapsed}s`;
-    renderResults(data);
+
+    if (method === "recommend") {
+      statusEl.textContent = `Agent responded in ${elapsed}s after ${data.tool_calls.length} tool call(s)`;
+      renderRecommendation(data);
+    } else {
+      statusEl.textContent = `${data.count} result(s) in ${elapsed}s`;
+      renderSearchResults(data);
+    }
   } catch (err) {
     statusEl.className = "error";
     statusEl.textContent = `Network error: ${err.message}. Is the server running and is this origin in CORS_ALLOWED_ORIGINS?`;

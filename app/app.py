@@ -24,16 +24,19 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sentence_transformers import SentenceTransformer
 from supabase import create_client
 
+from app import recommend_agent
 from app.auth import ApiKeyASGIGuard, ApiKeyRecord, create_api_key, require_admin, require_api_key
 from app.mcp_server import mcp
 from app.schemas import (
     GenerateKeyRequest,
     GenerateKeyResponse,
+    RecommendRequest,
+    RecommendResponse,
     VibeSearchRequest,
     VibeSearchResponse,
 )
@@ -133,6 +136,41 @@ async def search_vibe(
     return VibeSearchResponse(query=request.query, count=len(results), results=results)
 
 
+@app.post("/api/v1/recommend", response_model=RecommendResponse, tags=["search"])
+async def recommend(
+    request: RecommendRequest,
+    _key: ApiKeyRecord = Depends(require_api_key),
+    x_api_key: str = Header(..., alias="X-API-Key"),
+) -> RecommendResponse:
+    """Method 2: an LLM-driven recommendation, as opposed to method 1's
+    raw ranked list (POST /api/v1/search/vibe).
+
+    Unlike vibe_search(), this doesn't call the database directly -- it
+    hands the caller's own API key to recommend_agent.get_recommendation(),
+    which connects to *this same server's* MCP endpoint as a genuine
+    client and lets an LLM (Groq) decide how to use the
+    search_anime_manga_vibes tool. See recommend_agent.py for why that
+    indirection is deliberate rather than just calling vibe_search()
+    in-process. Requires `require_api_key` same as search (this route's
+    own call), and the agent's internal tool calls are metered against
+    that same key too -- there's no separate bypass credential.
+    """
+    try:
+        result = await recommend_agent.get_recommendation(
+            api_key=x_api_key, vibe=request.vibe, media_type=request.type
+        )
+    except Exception as exc:  # noqa: BLE001 -- surface any agent/Groq/MCP failure as a clean 502
+        logger.exception("Recommendation agent failed")
+        raise HTTPException(status_code=502, detail=f"Recommendation agent failed: {exc}") from exc
+
+    return RecommendResponse(
+        vibe=request.vibe,
+        explanation=result["explanation"],
+        media=result["media"],
+        tool_calls=result["tool_calls"],
+    )
+
+
 @app.post(
     "/api/v1/keys/generate",
     response_model=GenerateKeyResponse,
@@ -170,9 +208,11 @@ async def generate_key(request: GenerateKeyRequest) -> GenerateKeyResponse:
 # Mounting at "/" makes those routes resolve to exactly /sse and
 # /messages/ at the app's root, matching what's documented for clients
 # in docs/MCP.md. The routes declared above (/healthz,
-# /api/v1/search/vibe, /api/v1/keys/generate) are registered on `app`
-# directly and are matched before falling through to this mount, so
-# there's no collision.
+# /api/v1/search/vibe, /api/v1/recommend, /api/v1/keys/generate) are
+# registered on `app` directly and are matched before falling through to
+# this mount, so there's no collision. Note that /api/v1/recommend
+# itself calls back into this same mount as an MCP client -- see
+# recommend_agent.py.
 #
 # ApiKeyASGIGuard wraps the mounted sub-app with the same X-API-Key
 # check `require_api_key` does for REST -- see auth.py's module

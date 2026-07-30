@@ -59,6 +59,37 @@ class VibeSearchResponse(BaseModel):
     results: list[MediaResult]
 
 
+class RecommendRequest(BaseModel):
+    vibe: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="Natural-language description of the mood, vibe, or theme you want a recommendation for.",
+    )
+    type: MediaTypeFilter = Field("ALL", description="Restrict the recommendation to ANIME, MANGA, or ALL.")
+
+
+class ToolCallLogEntry(BaseModel):
+    tool: str
+    arguments: dict
+
+
+class RecommendResponse(BaseModel):
+    vibe: str
+    explanation: str = Field(description="The agent's natural-language case for this pick.")
+    media: Optional[MediaResult] = Field(
+        default=None,
+        description=(
+            "The recommended title, if the agent settled on one it actually saw via the "
+            "search tool. Null if it never called the tool, or its final answer didn't "
+            "reference a real candidate."
+        ),
+    )
+    tool_calls: list[ToolCallLogEntry] = Field(
+        default_factory=list, description="Every search_anime_manga_vibes call the agent made while deciding."
+    )
+
+
 class GenerateKeyRequest(BaseModel):
     owner_label: str = Field(
         ...,

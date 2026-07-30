@@ -9,3 +9,6 @@ fastapi>=0.111
 uvicorn[standard]>=0.30
 mcp>=1.0,<2.0  # pinned below the 2.0 MCPServer/Extension rewrite; this app targets FastMCP's sse_app()
 pydantic>=2.7
+
+# Recommendation agent (method 2)
+groq>=1.6

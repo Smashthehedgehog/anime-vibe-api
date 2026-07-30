@@ -104,7 +104,12 @@ uvicorn app.app:app --reload
 
 Serves:
 
-- `POST /api/v1/search/vibe` — REST search (`{"query": ..., "limit": 10, "type": "ALL"}`), requires `X-API-Key`
+- `POST /api/v1/search/vibe` — REST search, method 1 (`{"query": ..., "limit": 10, "type": "ALL"}`), requires `X-API-Key`
+- `POST /api/v1/recommend` — AI recommendation, method 2
+  (`{"vibe": ..., "type": "ALL"}`), requires `X-API-Key`. A Groq LLM
+  acting as a real MCP client against this server's own `/sse` endpoint
+  picks one title with reasoning, instead of returning a ranked list.
+  See [docs/RECOMMEND.md](docs/RECOMMEND.md).
 - `GET /sse` + `POST /messages/` — MCP server (SSE transport), tool
   `search_anime_manga_vibes`, requires `X-API-Key`. See
   [docs/MCP.md](docs/MCP.md) for how to connect a client.
@@ -119,10 +124,11 @@ CORS is locked down to the origins listed in `CORS_ALLOWED_ORIGINS`
 
 ### Test frontend
 
-A minimal, dependency-free HTML/JS client for manually exercising
-`POST /api/v1/search/vibe` lives in [frontend/index.html](frontend/index.html).
-It's a plain static file — no build step. Serve it as real HTTP (not
-`file://`, which CORS handles inconsistently across browsers):
+A minimal, dependency-free HTML/JS client for manually exercising both
+methods lives in [frontend/index.html](frontend/index.html) — a toggle
+switches between direct search and the AI recommendation agent. It's a
+plain static file — no build step. Serve it as real HTTP (not `file://`,
+which CORS handles inconsistently across browsers):
 
 ```bash
 cd frontend && python -m http.server 3000
