@@ -1,0 +1,4 @@
+-- Stage 2: hybrid search
+-- TODO: match_media(query_embedding, match_threshold, match_count) RPC
+-- combining cosine similarity (<=>) with normalized popularity, plus an
+-- HNSW index on media_metadata.embedding.

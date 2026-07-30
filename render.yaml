@@ -1,0 +1,6 @@
+# Stage 5: Render Blueprint
+# TODO:
+# - web service running the Docker image (uvicorn app.app:app)
+# - cron job: ingestion_worker.py && vector_worker.py, Sundays 02:00 UTC
+# - envVars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ADMIN_MASTER_TOKEN,
+#   CORS_ALLOWED_ORIGINS (sync: false for secrets)

@@ -1,0 +1,4 @@
+-- Stage 1: Supabase schema for media_metadata
+-- TODO: enable pgvector, create media_metadata(id, type, title_english,
+-- synopsis, genres text[], tags text[], popularity, cover_image_url,
+-- embedding vector(384)).
