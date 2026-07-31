@@ -42,9 +42,10 @@ All 5 stages complete.
    weights at build time and set `HF_HUB_OFFLINE=1` for the runtime
    container, so startup makes zero network calls to Hugging Face (see
    [docs/DEPLOY.md](docs/DEPLOY.md) for why that matters and how it was
-   verified). `render.yaml` defines the Blueprint: the always-on web
-   service plus a cron job that re-runs `ingestion_worker.py` then
-   `vector_worker.py` every Sunday at 02:00 UTC, reusing the same image.
+   verified). `render.yaml` defines the Blueprint: a single free-plan
+   web service (Render's Cron Job type has a real minimum cost and no
+   free tier, so the catalog refresh is run manually instead — see
+   [docs/DEPLOY.md](docs/DEPLOY.md)).
 
 ## Local setup
 
@@ -164,9 +165,10 @@ docker build -t anime-vibe-api .
 builds the production image locally (installs deps, bakes in the
 embedding model weights). Deploying is via a Render Blueprint
 (`render.yaml`) — connect this repo in the Render dashboard and it
-provisions the web service + weekly refresh cron job together. See
+provisions the (free-plan) web service. See
 [docs/DEPLOY.md](docs/DEPLOY.md) for the full walkthrough, including why
-the container is forced fully offline (`HF_HUB_OFFLINE=1`) at runtime.
+the container is forced fully offline (`HF_HUB_OFFLINE=1`) at runtime,
+and why there's no cron job.
 
 ## Environment variables
 

@@ -1,27 +1,39 @@
 # Deploying to Render
 
 This repo deploys as a [Render Blueprint](https://render.com/docs/blueprint-spec)
-(`render.yaml`), which provisions two services from one Docker image
+(`render.yaml`), which provisions one service from the Docker image
 (`Dockerfile`):
 
 | Service | Type | What it does |
 |---|---|---|
-| `anime-vibe-api` | `web` | Runs `uvicorn app.app:app` — the REST + MCP server. Always on. |
-| `anime-vibe-refresh` | `cron` | Overrides the image's CMD (via `dockerCommand`) to run `ingestion_worker.py` then `vector_worker.py`, Sundays at 02:00 UTC. |
+| `anime-vibe-api` | `web`, **free plan** | Runs `uvicorn app.app:app` — the REST + MCP server. |
+
+**Why no cron job / why free plan, specifically:** Render's Cron Job
+service type cannot run on the free tier at all — confirmed directly
+against Render's own docs: *"Other service types don't support Free
+instances."* Even on a paid plan, a cron job has a real minimum cost
+(Render: *"a minimum monthly charge of $1 per cron job service"*).
+Rather than pay for a weekly auto-refresh, that job was dropped — see
+"Keeping the catalog fresh" below for the manual alternative. The
+tradeoff of staying on the free web service plan: it *"spin[s] down
+after 15 minutes without receiving any inbound traffic,"* so the first
+request after any idle gap eats a real cold-start (Render waking the
+container, on top of this app's own startup time — which is fast once
+awake, see below). If that tradeoff isn't worth it, switch `plan: free`
+to `plan: starter` in `render.yaml` for an always-on service.
 
 ## Steps
 
 1. Push this repo to GitHub (already done).
 2. In the Render dashboard: **New +** → **Blueprint** → select this repo.
-   Render reads `render.yaml` and shows both services before creating
+   Render reads `render.yaml` and shows the service before creating
    anything.
 3. Render will prompt for every env var marked `sync: false` in
    `render.yaml` — currently `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `ADMIN_MASTER_TOKEN`, `CORS_ALLOWED_ORIGINS`, and `GROQ_API_KEY`
-   (all on the web service; the cron job only needs the two Supabase
-   ones). These are never written to `render.yaml` itself, so nothing
-   sensitive is in git. `GROQ_API_KEY` powers the `/api/v1/recommend`
-   agent (see [docs/RECOMMEND.md](RECOMMEND.md)) — get one free at
+   `ADMIN_MASTER_TOKEN`, `CORS_ALLOWED_ORIGINS`, and `GROQ_API_KEY`.
+   These are never written to `render.yaml` itself, so nothing sensitive
+   is in git. `GROQ_API_KEY` powers the `/api/v1/recommend` agent (see
+   [docs/RECOMMEND.md](RECOMMEND.md)) — get one free at
    [console.groq.com](https://console.groq.com).
 4. Deploy. First build takes several minutes (installing `torch` +
    `sentence-transformers` and downloading the embedding model — see
@@ -36,9 +48,7 @@ This repo deploys as a [Render Blueprint](https://render.com/docs/blueprint-spec
    project that's already been through stages 1-2 (ingestion +
    embedding), `media_metadata` is already populated — nothing further
    to do. For a genuinely fresh Supabase project, the table starts
-   empty and the cron job populates it on its first scheduled run, or
-   trigger it manually from the Render dashboard ("Run Job") instead of
-   waiting until Sunday.
+   empty — see "Keeping the catalog fresh" below to populate it.
 7. **HNSW index note**: if the project's HNSW index (see
    [docs/RECOMMEND.md](RECOMMEND.md) / the migrations in
    `supabase/migrations/`) was ever dropped and not rebuilt — e.g.
@@ -75,11 +85,25 @@ Hugging Face being reachable.
 
 ## Keeping the catalog fresh
 
-The cron job exists so `media_metadata` doesn't go stale as AniList adds
-new releases: `ingestion_worker.py` re-upserts everything (cheap for
-already-seen IDs, since it's an upsert), then `vector_worker.py` embeds
-whatever came in with a null `embedding` — i.e. only genuinely new or
-changed titles get re-embedded, not the whole catalog every week.
+There's no automatic refresh (see the free-plan tradeoff at the top of
+this doc) — `media_metadata` only updates when you run the workers
+yourself. Whenever you want to pick up new/changed AniList titles,
+run both against the **production** Supabase project (point `.env` at
+its `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`, not local dev's):
+
+```bash
+python ingestion/ingestion_worker.py   # re-upserts everything (cheap for
+                                        # already-seen ids, it's an upsert)
+python ingestion/vector_worker.py      # embeds whatever came in with a
+                                        # null embedding -- only genuinely
+                                        # new/changed titles get re-embedded
+```
+
+If you want this automated again later without paying for a Render cron
+job, the `anime-vibe-refresh` service definition (git history, this
+commit's parent) can be restored — or point a free external scheduler
+(e.g. a GitHub Actions workflow on a `schedule:` trigger, running in
+GitHub's own compute, not Render's) at these same two scripts.
 
 ## Local equivalent of the Render build
 

@@ -1,11 +1,16 @@
 # Render Blueprint. Connect this repo in the Render dashboard (New +
-# -> Blueprint) and it provisions both services below from this file.
+# -> Blueprint) and it provisions the service below.
 #
-# Two services share one Docker image (see Dockerfile):
-#   - `anime-vibe-api`: the FastAPI + MCP server, always running.
-#   - `anime-vibe-refresh`: a cron job that re-runs the ingestion and
-#     vectorization workers weekly, overriding the image's default CMD
-#     via `dockerCommand` instead of starting uvicorn.
+# Free plan, deliberately: Render's Cron Job service type cannot run on
+# the free tier at all ("Other service types don't support Free
+# instances" -- Render's own docs), and carries a real minimum cost
+# (>= $1/month) on any paid plan. Rather than pay for a weekly
+# auto-refresh cron job, that job was dropped -- see docs/DEPLOY.md for
+# how to re-run the catalog refresh manually instead. The tradeoff for
+# staying on the free web service plan: it spins down after 15 minutes
+# of no traffic, so the first request after any idle gap eats a real
+# cold-start (Render waking the container, on top of this app's own
+# startup time).
 #
 # Secrets (`sync: false`) are intentionally left out of this file --
 # Render prompts for them once in the dashboard on first deploy and
@@ -17,7 +22,7 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: starter
+    plan: free
     region: oregon
     healthCheckPath: /healthz
     envVars:
@@ -39,23 +44,3 @@ services:
       # from Render's own $PORT at runtime (see recommend_agent.py). Only
       # add it if the agent ever needs to reach an MCP server on a
       # different host than itself.
-
-  - name: anime-vibe-refresh
-    type: cron
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    plan: starter
-    region: oregon
-    # Sundays at 02:00 UTC. Standard 5-field cron; Render evaluates it in
-    # UTC. Re-runs ingestion (new/changed AniList titles) then
-    # vectorization (embeds whatever ingestion just added).
-    schedule: "0 2 * * 0"
-    dockerCommand: sh -c "python ingestion/ingestion_worker.py && python ingestion/vector_worker.py"
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: EMBEDDING_MODEL_NAME
-        value: all-MiniLM-L6-v2
