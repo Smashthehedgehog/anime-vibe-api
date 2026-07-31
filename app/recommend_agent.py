@@ -47,7 +47,15 @@ from mcp.client.sse import sse_client
 logger = logging.getLogger("recommend_agent")
 
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-INTERNAL_MCP_URL = os.environ.get("INTERNAL_MCP_URL", "http://127.0.0.1:8000/sse")
+# Render (and most PaaS hosts) assign the actual listening port via $PORT
+# at runtime -- it's not always 8000. The Dockerfile's CMD already binds
+# uvicorn to ${PORT:-8000} (see Dockerfile), so this default has to match
+# that or the agent tries to reach itself on the wrong port and every
+# recommend call fails. INTERNAL_MCP_URL can still be overridden directly
+# for setups where the agent and MCP server aren't on the same host.
+INTERNAL_MCP_URL = os.environ.get(
+    "INTERNAL_MCP_URL", f"http://127.0.0.1:{os.environ.get('PORT', '8000')}/sse"
+)
 MAX_TOOL_ROUNDS = 3
 TOP_N = 10
 

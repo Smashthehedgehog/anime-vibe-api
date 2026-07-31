@@ -17,19 +17,36 @@ This repo deploys as a [Render Blueprint](https://render.com/docs/blueprint-spec
    anything.
 3. Render will prompt for every env var marked `sync: false` in
    `render.yaml` — currently `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `ADMIN_MASTER_TOKEN` (web only), and `CORS_ALLOWED_ORIGINS` (web
-   only). These are never written to `render.yaml` itself, so nothing
-   sensitive is in git.
+   `ADMIN_MASTER_TOKEN`, `CORS_ALLOWED_ORIGINS`, and `GROQ_API_KEY`
+   (all on the web service; the cron job only needs the two Supabase
+   ones). These are never written to `render.yaml` itself, so nothing
+   sensitive is in git. `GROQ_API_KEY` powers the `/api/v1/recommend`
+   agent (see [docs/RECOMMEND.md](RECOMMEND.md)) — get one free at
+   [console.groq.com](https://console.groq.com).
 4. Deploy. First build takes several minutes (installing `torch` +
    `sentence-transformers` and downloading the embedding model — see
    below); later deploys reuse Docker layer caching for anything that
    didn't change.
 5. Once the web service is live, confirm `GET /<service-url>/healthz`
-   returns `{"status": "ok"}`, then issue yourself an API key (see
-   [docs/AUTH.md](AUTH.md)) and try `POST /api/v1/search/vibe`.
-6. The `media_metadata` table starts empty — the cron job populates it
-   on its first scheduled run, or trigger it manually from the Render
-   dashboard ("Run Job") instead of waiting until Sunday.
+   returns `{"status": "ok"}`, then issue an API key for whatever's
+   going to call this (a portfolio frontend, a script, yourself) via
+   `POST /api/v1/keys/generate` (see [docs/AUTH.md](AUTH.md)) and try
+   `POST /api/v1/search/vibe`.
+6. If you're pointing `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` at a
+   project that's already been through stages 1-2 (ingestion +
+   embedding), `media_metadata` is already populated — nothing further
+   to do. For a genuinely fresh Supabase project, the table starts
+   empty and the cron job populates it on its first scheduled run, or
+   trigger it manually from the Render dashboard ("Run Job") instead of
+   waiting until Sunday.
+7. **HNSW index note**: if the project's HNSW index (see
+   [docs/RECOMMEND.md](RECOMMEND.md) / the migrations in
+   `supabase/migrations/`) was ever dropped and not rebuilt — e.g.
+   because building it hit Supabase's Cloudflare-proxied Management API
+   timeout on a large, already-populated table — search still works
+   correctly, just without the fast-path index (a few seconds per query
+   instead of milliseconds, since it falls back to a full scan). Not a
+   blocker for deploying, just worth knowing if search feels slow.
 
 ## Why the model is pre-downloaded *and* forced offline
 
@@ -76,5 +93,10 @@ docker run --rm -p 8000:8000 \
   -e SUPABASE_URL=... \
   -e SUPABASE_SERVICE_ROLE_KEY=... \
   -e CORS_ALLOWED_ORIGINS=https://your-portfolio-domain.com \
+  -e GROQ_API_KEY=... \
   anime-vibe-api
 ```
+
+`INTERNAL_MCP_URL` doesn't need to be set here — it derives itself from
+`$PORT` (see `app/recommend_agent.py`), matching whatever port this
+container is actually bound to.

@@ -31,6 +31,14 @@ services:
         sync: false
       - key: EMBEDDING_MODEL_NAME
         value: all-MiniLM-L6-v2
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      # INTERNAL_MCP_URL is deliberately not set here -- it self-derives
+      # from Render's own $PORT at runtime (see recommend_agent.py). Only
+      # add it if the agent ever needs to reach an MCP server on a
+      # different host than itself.
 
   - name: anime-vibe-refresh
     type: cron
