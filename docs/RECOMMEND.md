@@ -14,25 +14,27 @@ This doc covers method 2. See the main [README](../README.md) and
 
 ## What's actually happening
 
-`app/recommend_agent.py` connects to **this server's own `/sse` MCP
-endpoint as a real client** — the exact same protocol an external agent
-like Claude Desktop would use to reach `search_anime_manga_vibes` (see
-[docs/MCP.md](MCP.md)). It is not a shortcut that calls the search logic
-directly in-process. Two phases, on each `POST /api/v1/recommend`:
+`app/recommend_agent.py` acts as **a real MCP client against this
+server's own MCP server object** (`mcp_server.mcp`) — the same
+`ClientSession`, the same tool schema from `list_tools()`, the same
+`search_anime_manga_vibes` tool implementation an external agent like
+Claude Desktop would reach over `/sse` (see [docs/MCP.md](MCP.md)). It
+is not a shortcut that calls the search logic directly in-process — it
+goes through the actual MCP protocol, just over an in-process transport
+rather than a second live network connection (see "Why in-process, not
+a second SSE connection" below). Two phases, on each
+`POST /api/v1/recommend`:
 
-**Phase 1 — gather.** Open an SSE connection to `/sse`, authenticated
-with **the caller's own `X-API-Key`** (no separate internal/bypass
-credential — these search calls count against the same rate limit as
-everything else that key does). Ask the MCP server what tools it has
-(`list_tools`) and hand that schema straight to Groq — MCP tool schemas
-are already JSON Schema, so no translation is needed. Give Groq's
-`llama-3.3-70b-versatile` the user's vibe and let it call
-`search_anime_manga_vibes` as many times as it wants (up to 3 rounds,
-requesting ~20-30 results per call so there's a real pool to choose
-from) — e.g. a second, narrower search if the first batch feels thin.
-Every candidate it sees across all calls is accumulated. If the model
-never calls the tool at all, one direct fallback search runs so phase 2
-always has real data to work with.
+**Phase 1 — gather.** Open a `ClientSession` against our own MCP server
+and ask it what tools it has (`list_tools`), handing that schema
+straight to Groq — MCP tool schemas are already JSON Schema, so no
+translation is needed. Give Groq's `llama-3.3-70b-versatile` the user's
+vibe and let it call `search_anime_manga_vibes` as many times as it
+wants (up to 3 rounds, requesting ~20-30 results per call so there's a
+real pool to choose from) — e.g. a second, narrower search if the first
+batch feels thin. Every candidate it sees across all calls is
+accumulated. If the model never calls the tool at all, one direct
+fallback search runs so phase 2 always has real data to work with.
 
 **Phase 2 — rank.** A separate request (Groq's JSON mode, no tools this
 time) asks the model to rank the top 10 best fits from *only* the
@@ -45,8 +47,50 @@ user, capped at 10.
 Why go through the MCP protocol at all, given the agent and the tool
 live in the same process: this endpoint exists specifically to exercise
 the MCP surface with a genuine tool-calling LLM. Calling the search
-function directly would be simpler and marginally faster, but would
-defeat the point of building this particular feature.
+function directly (bypassing MCP entirely) would be simpler and
+marginally faster, but would defeat the point of building this
+particular feature.
+
+## Why in-process, not a second SSE connection
+
+This originally worked by opening a real SSE connection from the agent
+to this same process's own `/sse` route — the full network round-trip,
+to demonstrate the wire protocol end to end, not just the client
+library. That turned out not to survive contact with Render's free
+instance (512 MB RAM): one process simultaneously holding the loaded
+embedding model, a second live HTTP/SSE socket talking to itself, and
+several rounds of Groq calls each carrying full candidate payloads
+(title, synopsis, genres, tags for ~20-30 items) reliably OOM-killed the
+container on every `/api/v1/recommend` call — confirmed both in Render's
+own logs and by reproducing the crash directly against the live
+deployment (a request that returns Render's edge 502 page in well under
+a second, rather than our own app's 502, is this happening: the process
+died before it could even respond).
+
+The fix keeps the actual MCP protocol intact — real `ClientSession`,
+real `Server`, real JSON-RPC messages, the real tool schema and
+implementation — but swaps the transport for
+`mcp.shared.memory.create_connected_server_and_client_session`, which
+wires the client and server together over in-process memory streams
+instead of a socket. The redundant network/HTTP/SSE layer was the
+expensive part, not the protocol itself; removing it took the endpoint
+from a reliable crash to a reliable success. Candidate payloads fed back
+into the LLM's own message history are also trimmed (full synopsis
+truncated to `SYNOPSIS_CHARS_FOR_LLM`, and fields the model doesn't need
+to reason about ranking — like `cover_image_url`, `similarity`, `score`
+— dropped) so that history doesn't grow unbounded across rounds; the
+full, untrimmed record is still what's returned to the caller as
+`media`.
+
+One behavior change from this: because the internal tool calls no
+longer go through the ASGI-level `X-API-Key` guard in front of `/sse`,
+they're no longer separately metered against the caller's rate limit —
+only the outer `POST /api/v1/recommend` call itself is (via
+`require_api_key`). Previously, a single recommend call with 3 gather
+rounds could consume up to 4 units of a key's hourly quota (1 for the
+recommend call, up to 3 more for the internal searches it triggered);
+now it consumes exactly 1, which is arguably the more correct behavior
+for what is, from the caller's perspective, a single logical request.
 
 ## Why Groq
 
@@ -99,12 +143,8 @@ debugging, but intentionally not rendered in the frontend.
 ```
 GROQ_API_KEY=...                              # console.groq.com, free tier
 GROQ_MODEL=llama-3.3-70b-versatile
-INTERNAL_MCP_URL=http://127.0.0.1:8000/sse    # where the agent reaches its own MCP server
 ```
 
-`INTERNAL_MCP_URL` matters most for deployment: it defaults to
-`127.0.0.1`, which is only correct when the agent and the MCP server are
-literally the same running process on the same host (true for the
-`uvicorn app.app:app` setup this project uses). If that ever changes,
-this needs to point wherever the service can actually reach its own
-`/sse` endpoint from.
+No URL/host config needed — the agent connects to the `mcp` server
+object directly in-process (see "Why in-process, not a second SSE
+connection" above), so there's nothing that varies by deployment target.

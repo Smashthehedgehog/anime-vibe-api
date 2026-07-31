@@ -121,6 +121,20 @@ docker run --rm -p 8000:8000 \
   anime-vibe-api
 ```
 
-`INTERNAL_MCP_URL` doesn't need to be set here — it derives itself from
-`$PORT` (see `app/recommend_agent.py`), matching whatever port this
-container is actually bound to.
+## Why `/api/v1/recommend` doesn't open a second network connection to itself
+
+The recommendation agent (`app/recommend_agent.py`) is a real MCP client
+against this server's own MCP server object — same `ClientSession`, same
+tool schema, same tool implementation an external client like Claude
+Desktop would use. It originally did that over a live SSE connection to
+this same process's own `/sse` route, to exercise the full wire
+protocol. On Render's free instance (512 MB RAM), that meant one process
+holding the loaded embedding model, a second live HTTP/SSE socket to
+itself, and several rounds of Groq calls with full candidate payloads,
+all at once — confirmed (via Render's logs and by reproducing it
+directly against the live deployment) to reliably OOM-kill the
+container on every `/api/v1/recommend` call. It now connects over
+`mcp.shared.memory`'s in-process transport instead — the real MCP
+protocol and tool implementation, just without the redundant loopback
+socket, which was the actually expensive part. See
+[docs/RECOMMEND.md](RECOMMEND.md) for the full writeup.
