@@ -108,7 +108,8 @@ Serves:
 - `POST /api/v1/recommend` — AI recommendation, method 2
   (`{"vibe": ..., "type": "ALL"}`), requires `X-API-Key`. A Groq LLM
   acting as a real MCP client against this server's own `/sse` endpoint
-  picks one title with reasoning, instead of returning a ranked list.
+  gathers candidates via the search tool, then ranks its own top 10 with
+  a reason each — its judgment, not the raw similarity ranking.
   See [docs/RECOMMEND.md](docs/RECOMMEND.md).
 - `GET /sse` + `POST /messages/` — MCP server (SSE transport), tool
   `search_anime_manga_vibes`, requires `X-API-Key`. See

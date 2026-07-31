@@ -74,19 +74,24 @@ class ToolCallLogEntry(BaseModel):
     arguments: dict
 
 
+class RankedRecommendation(BaseModel):
+    rank: int = Field(description="1 = the agent's most confident pick.")
+    reason: str = Field(description="The agent's specific, one-sentence case for this title.")
+    media: MediaResult
+
+
 class RecommendResponse(BaseModel):
     vibe: str
-    explanation: str = Field(description="The agent's natural-language case for this pick.")
-    media: Optional[MediaResult] = Field(
-        default=None,
+    recommendations: list[RankedRecommendation] = Field(
+        default_factory=list,
         description=(
-            "The recommended title, if the agent settled on one it actually saw via the "
-            "search tool. Null if it never called the tool, or its final answer didn't "
-            "reference a real candidate."
+            "Up to 10 titles, ordered by the agent's own judgment of fit -- not the raw "
+            "embedding similarity/score on each media record. Empty if the agent never "
+            "found any real candidates to rank."
         ),
     )
     tool_calls: list[ToolCallLogEntry] = Field(
-        default_factory=list, description="Every search_anime_manga_vibes call the agent made while deciding."
+        default_factory=list, description="Every search_anime_manga_vibes call the agent made while gathering candidates."
     )
 
 

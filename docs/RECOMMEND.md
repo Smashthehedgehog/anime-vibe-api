@@ -5,8 +5,8 @@ There are two ways to get an anime/manga recommendation from this API:
 | | Method 1: search | Method 2: recommend |
 |---|---|---|
 | Endpoint | `POST /api/v1/search/vibe` | `POST /api/v1/recommend` |
-| Returns | Ranked list (up to `limit`) | One pick, with reasoning |
-| How it decides | Cosine similarity + popularity, deterministic | An LLM (Groq) calls the search tool itself and judges the results |
+| Returns | Ranked list (up to `limit`) | Its own top 10, each with a reason |
+| How it decides | Cosine similarity + popularity, deterministic | An LLM (Groq) calls the search tool itself, then ranks what it found by its own judgment |
 | Uses an LLM? | No | Yes |
 
 This doc covers method 2. See the main [README](../README.md) and
@@ -18,29 +18,29 @@ This doc covers method 2. See the main [README](../README.md) and
 endpoint as a real client** — the exact same protocol an external agent
 like Claude Desktop would use to reach `search_anime_manga_vibes` (see
 [docs/MCP.md](MCP.md)). It is not a shortcut that calls the search logic
-directly in-process. Concretely, on each `POST /api/v1/recommend`:
+directly in-process. Two phases, on each `POST /api/v1/recommend`:
 
-1. Open an SSE connection to `/sse`, authenticated with **the caller's
-   own `X-API-Key`** — there's no separate internal/bypass credential,
-   so the search calls this triggers count against the same rate limit
-   as everything else that key does.
-2. Ask the MCP server what tools it has (`list_tools`) and hand that
-   schema straight to Groq — MCP tool schemas are already JSON Schema,
-   so no translation step is needed to use them as Groq/OpenAI-style
-   function definitions.
-3. Give Groq's `llama-3.3-70b-versatile` the user's vibe and let it
-   decide whether to call `search_anime_manga_vibes` (it can call it
-   more than once — e.g. retry with a narrower query if the first batch
-   doesn't fit well — up to 3 rounds).
-4. Each tool call the model requests is executed for real, through the
-   MCP `call_tool` protocol, and the JSON result is fed back to the
-   model.
-5. Once the model stops requesting tool calls, its final message is the
-   answer. The system prompt requires it to end with a
-   `RECOMMENDATION_ID: <id>` line naming one of the titles the tool
-   actually returned; the server parses that out and attaches the full
-   record (cover image, genres, etc.) to the response rather than
-   asking the frontend to parse it out of prose.
+**Phase 1 — gather.** Open an SSE connection to `/sse`, authenticated
+with **the caller's own `X-API-Key`** (no separate internal/bypass
+credential — these search calls count against the same rate limit as
+everything else that key does). Ask the MCP server what tools it has
+(`list_tools`) and hand that schema straight to Groq — MCP tool schemas
+are already JSON Schema, so no translation is needed. Give Groq's
+`llama-3.3-70b-versatile` the user's vibe and let it call
+`search_anime_manga_vibes` as many times as it wants (up to 3 rounds,
+requesting ~20-30 results per call so there's a real pool to choose
+from) — e.g. a second, narrower search if the first batch feels thin.
+Every candidate it sees across all calls is accumulated. If the model
+never calls the tool at all, one direct fallback search runs so phase 2
+always has real data to work with.
+
+**Phase 2 — rank.** A separate request (Groq's JSON mode, no tools this
+time) asks the model to rank the top 10 best fits from *only* the
+candidates it actually saw in phase 1, each with a one-sentence reason.
+Every returned id is cross-checked against the real candidate pool —
+anything that doesn't match (a hallucinated id, or one repeated) is
+dropped rather than trusted. The result is the ordering shown to the
+user, capped at 10.
 
 Why go through the MCP protocol at all, given the agent and the tool
 live in the same process: this endpoint exists specifically to exercise
@@ -67,23 +67,32 @@ curl -X POST http://127.0.0.1:8000/api/v1/recommend \
 ```json
 {
   "vibe": "a hopeful post-apocalyptic story about rebuilding",
-  "explanation": "I recommend Apocalypse Hotel because...",
-  "media": { "id": 180675, "type": "ANIME", "title_english": "Apocalypse Hotel", "...": "..." },
+  "recommendations": [
+    {
+      "rank": 1,
+      "reason": "Apocalypse Hotel focuses on rebuilding and quiet perseverance rather than survival horror...",
+      "media": { "id": 180675, "type": "ANIME", "title_english": "Apocalypse Hotel", "similarity": 0.39, "score": 0.45, "...": "..." }
+    },
+    { "rank": 2, "reason": "...", "media": { "...": "..." } }
+  ],
   "tool_calls": [
-    { "tool": "search_anime_manga_vibes", "arguments": { "query": "hopeful post-apocalyptic story about rebuilding", "media_type": "ANIME", "limit": 10 } }
+    { "tool": "search_anime_manga_vibes", "arguments": { "query": "hopeful post-apocalyptic story about rebuilding", "media_type": "ANIME", "limit": 25 } }
   ]
 }
 ```
 
-`media` is `null` if the agent never called the tool, or if its final
-`RECOMMENDATION_ID` didn't match anything it actually saw — treated as a
-failed recommendation rather than trusted blindly, since the system
-prompt explicitly forbids inventing a title but nothing stops a model
-from ignoring instructions.
+`recommendations` is ordered by the model's own judgment, **not** by
+each item's `similarity`/`score` fields — those are still present on
+every `media` record (they're just the shared search-result shape), but
+phase 2 ranks on the model's reasoning, not those numbers. The test
+frontend deliberately doesn't render `similarity`/`score` for this
+method, to keep the distinction visible: this list is AI judgment, not
+raw cosine-similarity ranking.
 
-`tool_calls` is the full trace of what the agent searched for — useful
-for debugging why it picked what it picked, and shown in the test
-frontend for exactly that reason.
+`recommendations` is `[]` if the agent (and the phase-1 fallback) never
+turned up any real candidates. `tool_calls` is the trace of what got
+searched for during phase 1 — returned in the API response for
+debugging, but intentionally not rendered in the frontend.
 
 ## Environment variables
 

@@ -165,8 +165,7 @@ async def recommend(
 
     return RecommendResponse(
         vibe=request.vibe,
-        explanation=result["explanation"],
-        media=result["media"],
+        recommendations=result["recommendations"],
         tool_calls=result["tool_calls"],
     )
 

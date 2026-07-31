@@ -117,28 +117,18 @@
   .tags { margin-top: 0.4rem; font-size: 0.72rem; color: var(--muted); }
   .score { font-size: 0.72rem; color: var(--muted); float: right; }
 
-  .explanation {
-    background: var(--panel);
-    border: 1px solid var(--accent);
-    border-radius: 10px;
-    padding: 1rem;
-    font-size: 0.92rem;
-    line-height: 1.5;
-    margin-bottom: 0.9rem;
-  }
-  .explanation .label {
-    display: block;
+  .rank-badge {
+    display: inline-block;
     font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-weight: 700;
     color: var(--accent);
-    margin-bottom: 0.4rem;
+    margin-right: 0.4rem;
   }
-  .trace {
-    font-size: 0.72rem;
-    color: var(--muted);
-    margin-top: 0.6rem;
-    font-family: ui-monospace, Menlo, Consolas, monospace;
+  .reason {
+    font-size: 0.85rem;
+    color: var(--text);
+    margin: 0.2rem 0 0.5rem;
+    line-height: 1.4;
   }
 </style>
 </head>
@@ -156,7 +146,7 @@
     <label id="method-2-label">
       <input type="radio" name="method" value="recommend" />
       <strong>AI recommendation</strong>
-      <span>A Groq-powered agent calls the MCP search tool itself and picks one, with reasoning.</span>
+      <span>A Groq-powered agent calls the MCP search tool itself and ranks its top 10 picks, each with a reason.</span>
     </label>
   </div>
 
@@ -224,7 +214,7 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-function mediaCardHtml(r, { highlight = false } = {}) {
+function mediaCardHtml(r, { highlight = false, showScore = true, badge = null, reason = null } = {}) {
   const img = r.cover_image_url
     ? `<img src="${escapeHtml(r.cover_image_url)}" alt="" loading="lazy" />`
     : `<div class="noimg"></div>`;
@@ -233,14 +223,20 @@ function mediaCardHtml(r, { highlight = false } = {}) {
     ? escapeHtml(r.synopsis.length > 220 ? r.synopsis.slice(0, 220) + "..." : r.synopsis)
     : '<span style="opacity:0.5">No synopsis.</span>';
   const tags = [...(r.genres || []), ...(r.tags || [])].slice(0, 8).join(" · ");
+  const scoreHtml = showScore ? `<span class="score">score ${r.score.toFixed(3)}</span>` : "";
+  const metaHtml = showScore
+    ? `<div class="meta">popularity ${r.popularity} &middot; similarity ${r.similarity.toFixed(3)}</div>`
+    : `<div class="meta">popularity ${r.popularity}</div>`;
+  const reasonHtml = reason ? `<p class="reason">${escapeHtml(reason)}</p>` : "";
 
   return `
     <div class="card${highlight ? " highlight" : ""}">
       ${img}
       <div>
-        <span class="score">score ${r.score.toFixed(3)}</span>
-        <h3><span class="badge ${badgeClass}">${r.type}</span>${escapeHtml(r.title_english || "(untitled)")}</h3>
-        <div class="meta">popularity ${r.popularity} &middot; similarity ${r.similarity.toFixed(3)}</div>
+        ${scoreHtml}
+        <h3>${badge !== null ? `<span class="rank-badge">#${badge}</span>` : ""}<span class="badge ${badgeClass}">${r.type}</span>${escapeHtml(r.title_english || "(untitled)")}</h3>
+        ${metaHtml}
+        ${reasonHtml}
         <p class="synopsis">${synopsis}</p>
         ${tags ? `<div class="tags">${escapeHtml(tags)}</div>` : ""}
       </div>
@@ -257,23 +253,22 @@ function renderSearchResults(data) {
 }
 
 function renderRecommendation(data) {
-  const traceLines = (data.tool_calls || [])
-    .map((tc) => `${tc.tool}(${JSON.stringify(tc.arguments)})`)
-    .join("\n");
+  const recommendations = data.recommendations || [];
+  if (!recommendations.length) {
+    resultsEl.innerHTML = '<p style="color:var(--muted)">The agent didn\'t settle on any specific titles from its search.</p>';
+    return;
+  }
 
-  const explanationHtml = `
-    <div class="explanation">
-      <span class="label">Agent's pick</span>
-      ${escapeHtml(data.explanation)}
-      ${traceLines ? `<div class="trace">${escapeHtml(traceLines)}</div>` : ""}
-    </div>
-  `;
-
-  const mediaHtml = data.media
-    ? mediaCardHtml(data.media, { highlight: true })
-    : '<p style="color:var(--muted)">The agent didn\'t settle on a specific title from its search.</p>';
-
-  resultsEl.innerHTML = explanationHtml + mediaHtml;
+  resultsEl.innerHTML = recommendations
+    .map((rec) =>
+      mediaCardHtml(rec.media, {
+        highlight: rec.rank === 1,
+        showScore: false,
+        badge: rec.rank,
+        reason: rec.reason,
+      })
+    )
+    .join("");
 }
 
 form.addEventListener("submit", async (e) => {
@@ -328,7 +323,7 @@ form.addEventListener("submit", async (e) => {
     statusEl.className = "";
 
     if (method === "recommend") {
-      statusEl.textContent = `Agent responded in ${elapsed}s after ${data.tool_calls.length} tool call(s)`;
+      statusEl.textContent = `Agent returned ${data.recommendations.length} recommendation(s) in ${elapsed}s`;
       renderRecommendation(data);
     } else {
       statusEl.textContent = `${data.count} result(s) in ${elapsed}s`;
