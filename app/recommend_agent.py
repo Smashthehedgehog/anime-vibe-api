@@ -57,7 +57,17 @@ from app.mcp_server import mcp
 logger = logging.getLogger("recommend_agent")
 
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-MAX_TOOL_ROUNDS = 3
+# Both tightened after a confirmed OOM on Render's free 512 MB instance
+# on 2026-08-17, a week after the first memory fix (in-process MCP
+# transport + trimmed LLM-facing payloads) -- that fix stopped this from
+# failing on *every* call, but real traffic still occasionally exceeded
+# the container's memory a week later. The embedding model + torch
+# alone already consume a large share of that 512 MB baseline (shared
+# with Direct Search too, which hasn't shown this problem), leaving
+# thin headroom for this endpoint's own per-request growth. Fewer
+# rounds and a lower per-call result count directly cap how large that
+# growth can get.
+MAX_TOOL_ROUNDS = 2
 TOP_N = 10
 # How much of each candidate's synopsis to keep in the LLM's own message
 # history (phase 1 tool results carried into phase 2's ranking prompt).
@@ -65,6 +75,12 @@ TOP_N = 10
 # response -- this only trims what gets fed back into the conversation,
 # to stop it from growing unbounded across MAX_TOOL_ROUNDS rounds.
 SYNOPSIS_CHARS_FOR_LLM = 300
+# Hard ceiling on how many unique candidates `seen_candidates` can hold,
+# regardless of how many rounds/calls happen -- each entry keeps its
+# full, untrimmed record (synopsis, genres, tags, cover URL) since it's
+# what the final response returns, so this is the real worst-case memory
+# bound for a single recommend call, independent of MAX_TOOL_ROUNDS.
+MAX_CANDIDATES = 40
 
 GATHER_SYSTEM_PROMPT = """You are a knowledgeable anime/manga recommender helping \
 build a shortlist, not picking one title yet.
@@ -72,7 +88,7 @@ build a shortlist, not picking one title yet.
 You have one tool, search_anime_manga_vibes, which performs semantic
 search over a real catalog and returns candidates with a synopsis,
 genres, tags, and popularity. Call it to find options matching the
-user's described vibe -- request a limit around 20-30 so there's a
+user's described vibe -- request a limit around 10-15 so there's a
 decent pool to choose from. You may call it more than once (e.g. a
 second, differently-phrased or narrower query) if the first batch feels
 thin or off-target, but don't over-search: stop once you have a good
@@ -128,9 +144,14 @@ async def _call_search_tool(
     limit: int,
     seen_candidates: dict[int, dict[str, Any]],
 ) -> str:
-    """Call the search tool, record full candidates, return a trimmed
-    JSON string (or "{}" on a parse failure) for the LLM's own history.
+    """Call the search tool, record full candidates (up to MAX_CANDIDATES
+    total), return a trimmed JSON string (or "{}" on a parse failure) for
+    the LLM's own history.
     """
+    # The gather prompt only *suggests* 10-15; clamp here too rather than
+    # trust the model to stay under it -- this is the actual memory-cost
+    # lever, the prompt wording alone isn't a guarantee.
+    limit = max(1, min(limit, 20))
     result = await session.call_tool(
         "search_anime_manga_vibes", {"query": query, "media_type": media_type, "limit": limit}
     )
@@ -138,6 +159,8 @@ async def _call_search_tool(
     try:
         parsed = json.loads(text)
         for r in parsed.get("results", []):
+            if len(seen_candidates) >= MAX_CANDIDATES and r["id"] not in seen_candidates:
+                continue
             seen_candidates[r["id"]] = r
         return _tool_result_for_llm(parsed)
     except (json.JSONDecodeError, KeyError, TypeError):

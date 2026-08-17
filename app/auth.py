@@ -189,6 +189,9 @@ async def require_api_key(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
     except AuthBackendNotReady as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 -- a Supabase/network hiccup here shouldn't surface as a bare 500
+        logger.exception("Unexpected error validating API key")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auth backend temporarily unavailable") from exc
 
 
 # --- MCP SSE enforcement: an ASGI-level guard -------------------------------
@@ -237,6 +240,11 @@ class ApiKeyASGIGuard:
             return
         except AuthBackendNotReady as exc:
             response = JSONResponse({"detail": str(exc)}, status_code=503)
+            await response(scope, receive, send)
+            return
+        except Exception:  # noqa: BLE001 -- a Supabase/network hiccup here shouldn't surface as a bare 500
+            logger.exception("Unexpected error validating API key (ASGI guard)")
+            response = JSONResponse({"detail": "Auth backend temporarily unavailable"}, status_code=503)
             await response(scope, receive, send)
             return
 
