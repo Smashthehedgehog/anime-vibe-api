@@ -28,13 +28,16 @@ a second SSE connection" below). Two phases, on each
 **Phase 1 — gather.** Open a `ClientSession` against our own MCP server
 and ask it what tools it has (`list_tools`), handing that schema
 straight to Groq — MCP tool schemas are already JSON Schema, so no
-translation is needed. Give Groq's `llama-3.3-70b-versatile` the user's
+translation is needed. Give Groq's `openai/gpt-oss-120b` the user's
 vibe and let it call `search_anime_manga_vibes` as many times as it
-wants (up to 3 rounds, requesting ~20-30 results per call so there's a
-real pool to choose from) — e.g. a second, narrower search if the first
-batch feels thin. Every candidate it sees across all calls is
-accumulated. If the model never calls the tool at all, one direct
-fallback search runs so phase 2 always has real data to work with.
+wants (up to `MAX_TOOL_ROUNDS` rounds, requesting ~10-15 results per
+call so there's a real pool to choose from without ballooning memory
+on a 512 MB instance — see "Why in-process, not a second SSE
+connection" below) — e.g. a second, narrower search if the first batch
+feels thin. Every candidate it sees across all calls is accumulated,
+up to `MAX_CANDIDATES` total. If the model never calls the tool at
+all, one direct fallback search runs so phase 2 always has real data
+to work with.
 
 **Phase 2 — rank.** A separate request (Groq's JSON mode, no tools this
 time) asks the model to rank the top 10 best fits from *only* the
@@ -92,6 +95,24 @@ recommend call, up to 3 more for the internal searches it triggered);
 now it consumes exactly 1, which is arguably the more correct behavior
 for what is, from the caller's perspective, a single logical request.
 
+**Update, one week later:** the above fix stopped this from failing on
+*every* call, but Render's event log still showed a real OOM
+(`Ran out of memory (used over 512MB) while running your code`) under
+real traffic on 2026-08-17. The embedding model + torch already
+consume a large, fixed share of that 512 MB baseline (shared with
+Direct Search too, which has never shown this problem) — no amount of
+trimming on the recommend side changes that baseline, it only shrinks
+the *marginal* growth this endpoint adds on top of it. Tightened
+further: `MAX_TOOL_ROUNDS` 3 → 2, the per-call result count clamped to
+20 at the call site (not just suggested at 10-15 in the prompt), and a
+hard `MAX_CANDIDATES` (40) ceiling on how many unique candidates
+`seen_candidates` will ever hold in one request, regardless of how
+many rounds/calls happen. This reduces the worst case; it does not
+guarantee it can't happen again on the free tier. Render's Standard
+plan (2 GB RAM, $25/month) is the only way to make this a non-issue
+outright — a real cost/reliability tradeoff, left as an open decision
+rather than made unilaterally.
+
 ## Why Groq
 
 Fast (their inference hardware is built for low latency) and effectively
@@ -142,9 +163,24 @@ debugging, but intentionally not rendered in the frontend.
 
 ```
 GROQ_API_KEY=...                              # console.groq.com, free tier
-GROQ_MODEL=llama-3.3-70b-versatile
+GROQ_MODEL=openai/gpt-oss-120b
 ```
 
 No URL/host config needed — the agent connects to the `mcp` server
 object directly in-process (see "Why in-process, not a second SSE
 connection" above), so there's nothing that varies by deployment target.
+
+**On the model name specifically:** Groq periodically retires older
+models. This project originally ran on `llama-3.3-70b-versatile`; Groq
+removed it at some point without any advance signal visible from this
+side, and every `/api/v1/recommend` call started failing with a 404
+(`model_not_found`) from Groq's own API — confirmed directly by
+calling `POST https://api.groq.com/openai/v1/chat/completions` with
+that model name and getting back `"The model ... does not exist or
+you do not have access to it."`. `GROQ_MODEL` exists as an env var
+specifically so this doesn't require a code change to fix — if
+recommend calls start failing, check
+[console.groq.com/docs/models](https://console.groq.com/docs/models)
+for the current list before assuming it's a code bug. Any currently
+active model with `"tools"` in its `supported_features` (check
+`GET /openai/v1/models`) works as a drop-in replacement.

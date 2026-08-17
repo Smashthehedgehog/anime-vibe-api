@@ -5,8 +5,10 @@ is deterministic: embed the query, rank by cosine similarity + popularity,
 return the list. The caller does the picking.
 
 This module adds a second way to get a recommendation: an LLM (Groq's
-llama-3.3-70b-versatile, chosen for being fast and effectively free) acts
-as a genuine MCP *client* against this same server's MCP server object
+openai/gpt-oss-120b, chosen for being fast and effectively free -- note
+Groq periodically retires older models, e.g. the Llama 3.3 line this
+originally used; GROQ_MODEL is an env var override for exactly that
+reason) acts as a genuine MCP *client* against this same server's MCP server object
 (`mcp_server.mcp`) -- the same `ClientSession`, the same tool schema from
 `list_tools()`, the same `search_anime_manga_vibes` tool implementation
 an external agent like Claude Desktop would call over `/sse`. Two phases:
@@ -56,7 +58,7 @@ from app.mcp_server import mcp
 
 logger = logging.getLogger("recommend_agent")
 
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 # Both tightened after a confirmed OOM on Render's free 512 MB instance
 # on 2026-08-17, a week after the first memory fix (in-process MCP
 # transport + trimmed LLM-facing payloads) -- that fix stopped this from
