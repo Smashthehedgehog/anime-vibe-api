@@ -17,7 +17,7 @@ for each one — in this case, one tool:
 | Field | Value |
 |---|---|
 | Tool name | `search_anime_manga_vibes` |
-| Arguments | `query` (string, required), `media_type` (`"ALL"` \| `"ANIME"` \| `"MANGA"`, default `"ALL"`), `limit` (int 1-50, default 10) |
+| Arguments | `query` (string, required), `media_type` (`"ANIME"` \| `"MANGA"`, required -- no combined option, the catalog is a separate curated pool per type), `limit` (int 1-50, default 10) |
 | Returns | `{ "query": ..., "count": ..., "results": [...] }` — same shape as the REST endpoint's response body |
 
 The tool's docstring (in `app/mcp_server.py`) is what the client's LLM

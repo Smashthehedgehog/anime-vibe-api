@@ -89,13 +89,13 @@ logger = logging.getLogger("mcp_server")
 # keep it short and descriptive rather than matching the repo name.
 mcp = FastMCP("anime-vibe-search")
 
-MediaTypeFilter = Literal["ALL", "ANIME", "MANGA"]
+MediaTypeFilter = Literal["ANIME", "MANGA"]
 
 
 @mcp.tool()
 async def search_anime_manga_vibes(
     query: str,
-    media_type: MediaTypeFilter = "ALL",
+    media_type: MediaTypeFilter,
     limit: int = 10,
 ) -> dict:
     """Search for anime and manga by vibe, mood, or theme rather than by title.
@@ -113,8 +113,9 @@ async def search_anime_manga_vibes(
             theme, or plot elements. Freeform sentences work better than
             a keyword list -- prefer "melancholic time-loop story with a
             small cast" over "time loop, sad".
-        media_type: Restrict results to "ANIME", "MANGA", or "ALL"
-            (default) for both.
+        media_type: "ANIME" or "MANGA" -- required. The catalog is a
+            curated top-2500-by-popularity pool per type, searched
+            separately; there is no combined/"ALL" option.
         limit: Maximum number of results to return (1-50, default 10).
 
     Returns:

@@ -49,14 +49,16 @@ to `plan: starter` in `render.yaml` for an always-on service.
    embedding), `media_metadata` is already populated — nothing further
    to do. For a genuinely fresh Supabase project, the table starts
    empty — see "Keeping the catalog fresh" below to populate it.
-7. **HNSW index note**: if the project's HNSW index (see
-   [docs/RECOMMEND.md](RECOMMEND.md) / the migrations in
-   `supabase/migrations/`) was ever dropped and not rebuilt — e.g.
-   because building it hit Supabase's Cloudflare-proxied Management API
-   timeout on a large, already-populated table — search still works
-   correctly, just without the fast-path index (a few seconds per query
-   instead of milliseconds, since it falls back to a full scan). Not a
-   blocker for deploying, just worth knowing if search feels slow.
+7. **HNSW index note**: as of 2026-08-20 (see "Why a curated 5,000-title
+   catalog" below), `media_metadata` is trimmed to 5,000 rows
+   specifically so this index builds cleanly — it no longer hits the
+   Cloudflare-proxied Management API timeout that blocked it at 123k
+   rows. If it's ever dropped again (manually, or a fresh Supabase
+   project that hasn't run the migrations in `supabase/migrations/`
+   yet), search still works correctly, just without the fast-path index
+   (a few seconds per query instead of milliseconds, since it falls
+   back to a full scan) — not a blocker for deploying, just worth
+   knowing if search feels slow.
 
 ## Why the model is pre-downloaded *and* forced offline
 
@@ -83,13 +85,41 @@ the container level) and the server still started and served
 `/healthz` in about a second — proof startup has no live dependency on
 Hugging Face being reachable.
 
+## Why a curated 5,000-title catalog
+
+`media_metadata` was trimmed on 2026-08-20 from the full AniList
+catalog (~123,720 titles) down to the top 2,500 most popular ANIME and
+the top 2,500 most popular MANGA — two separate pools, 5,000 rows
+total (see `supabase/migrations/20260820233038_trim_to_top_2500_per_type.sql`).
+This was a real, largely irreversible production change; a full
+data-only backup of every row (including embeddings) was taken first
+via `supabase db dump --linked --data-only`, so the full catalog can
+be restored or re-expanded later if wanted.
+
+**Why:** the full catalog made HNSW indexing too compute-intensive to
+build on Supabase's free tier — Direct Search ran unindexed as a
+result (a few seconds per query instead of milliseconds). At 5,000
+rows, HNSW builds trivially; see
+`supabase/migrations/20260820233100_rebuild_hnsw_index_m16.sql`, which
+also reverts the index's `m` parameter from 8 back to pgvector's
+default 16 (m=8 was chosen earlier specifically to fit the *default*
+index under the free tier's storage cap at 123k rows — storage is no
+longer the binding constraint at 5,000).
+
+**Side effect:** the API no longer accepts a combined/"ALL" `type` —
+callers must specify `"ANIME"` or `"MANGA"` (see `app/schemas.py`).
+Mixing two curated, unrelated top-2500 pools into one ranked list
+would've been a worse experience than picking one and searching it
+properly.
+
 ## Keeping the catalog fresh
 
 There's no automatic refresh (see the free-plan tradeoff at the top of
 this doc) — `media_metadata` only updates when you run the workers
-yourself. Whenever you want to pick up new/changed AniList titles,
-run both against the **production** Supabase project (point `.env` at
-its `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`, not local dev's):
+yourself. **Important, given the curation above:** `ingestion_worker.py`
+re-upserts the *entire* AniList catalog, not just the curated 5,000 —
+running it alone would silently balloon `media_metadata` back toward
+123k rows and undo the trim. Always follow it with the same trim SQL:
 
 ```bash
 python ingestion/ingestion_worker.py   # re-upserts everything (cheap for
@@ -99,11 +129,26 @@ python ingestion/vector_worker.py      # embeds whatever came in with a
                                         # new/changed titles get re-embedded
 ```
 
+```sql
+-- Re-run against production (Supabase SQL editor, or `psql`/the CLI) --
+-- same logic as 20260820233038_trim_to_top_2500_per_type.sql, safe to
+-- run repeatedly. Re-ranks by *current* popularity and re-trims to the
+-- top 2,500 per type, whatever ingestion just added or changed.
+with ranked as (
+    select id, row_number() over (
+        partition by type order by popularity desc, id asc
+    ) as rank_in_type
+    from media_metadata
+)
+delete from media_metadata where id in (select id from ranked where rank_in_type > 2500);
+```
+
 If you want this automated again later without paying for a Render cron
 job, the `anime-vibe-refresh` service definition (git history, this
 commit's parent) can be restored — or point a free external scheduler
 (e.g. a GitHub Actions workflow on a `schedule:` trigger, running in
-GitHub's own compute, not Render's) at these same two scripts.
+GitHub's own compute, not Render's) at these same two scripts plus the
+trim query above.
 
 ## Local equivalent of the Render build
 

@@ -17,14 +17,14 @@ from typing import Any, Literal
 
 from app.state import AppState
 
-MediaTypeFilter = Literal["ALL", "ANIME", "MANGA"]
+MediaTypeFilter = Literal["ANIME", "MANGA"]
 
 
 async def vibe_search(
     state: AppState,
     query: str,
-    limit: int = 10,
-    media_type: MediaTypeFilter = "ALL",
+    limit: int,
+    media_type: MediaTypeFilter,
     match_threshold: float = 0.3,
 ) -> list[dict[str, Any]]:
     """Embed `query` and return the top `limit` matches from match_media().
@@ -52,7 +52,7 @@ async def vibe_search(
                 "query_embedding": embedding.tolist(),
                 "match_threshold": match_threshold,
                 "match_count": limit,
-                "media_type": None if media_type == "ALL" else media_type,
+                "media_type": media_type,
             },
         ).execute()
         return response.data or []

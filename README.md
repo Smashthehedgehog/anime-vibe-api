@@ -1,9 +1,12 @@
 # anime-vibe-api
 
-Semantic "vibe" search over the full AniList anime/manga catalog. Given a
-natural-language description of a mood or theme, returns the closest-matching
-titles by combining sentence-embedding similarity with popularity. Exposed
-both as a REST API and as an MCP tool so LLM agents can query it directly.
+Semantic "vibe" search over a curated AniList anime/manga catalog (the
+top 2,500 most popular anime and top 2,500 most popular manga, kept as
+separate pools -- see "Why a curated 5,000-title catalog" in
+[docs/DEPLOY.md](docs/DEPLOY.md)). Given a natural-language description
+of a mood or theme, returns the closest-matching titles by combining
+sentence-embedding similarity with popularity. Exposed both as a REST
+API and as an MCP tool so LLM agents can query it directly.
 
 **Stack:** FastAPI, MCP (SSE transport), Supabase (Postgres + pgvector),
 SentenceTransformers (`all-MiniLM-L6-v2`), Render (Blueprint deploy).
@@ -105,9 +108,9 @@ uvicorn app.app:app --reload
 
 Serves:
 
-- `POST /api/v1/search/vibe` — REST search, method 1 (`{"query": ..., "limit": 10, "type": "ALL"}`), requires `X-API-Key`
+- `POST /api/v1/search/vibe` — REST search, method 1 (`{"query": ..., "limit": 10, "type": "ANIME"}`), requires `X-API-Key`. `type` is required (`"ANIME"` or `"MANGA"` — no combined option, see above).
 - `POST /api/v1/recommend` — AI recommendation, method 2
-  (`{"vibe": ..., "type": "ALL"}`), requires `X-API-Key`. A Groq LLM
+  (`{"vibe": ..., "type": "ANIME"}`), requires `X-API-Key`. A Groq LLM
   acting as a real MCP client against this server's own MCP server
   object (in-process, not a second network connection to `/sse` — see
   [docs/RECOMMEND.md](docs/RECOMMEND.md) for why) gathers candidates via

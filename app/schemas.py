@@ -15,7 +15,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-MediaTypeFilter = Literal["ALL", "ANIME", "MANGA"]
+MediaTypeFilter = Literal["ANIME", "MANGA"]
 
 
 class VibeSearchRequest(BaseModel):
@@ -30,7 +30,14 @@ class VibeSearchRequest(BaseModel):
         ),
     )
     limit: int = Field(10, ge=1, le=50, description="Max number of results to return.")
-    type: MediaTypeFilter = Field("ALL", description="Restrict results to ANIME, MANGA, or ALL.")
+    type: MediaTypeFilter = Field(
+        ...,
+        description=(
+            "ANIME or MANGA -- required, no combined/ALL option. The catalog is a "
+            "curated top-2500-by-popularity pool per type (see docs/DEPLOY.md), so "
+            "callers must pick which pool to search rather than blend both."
+        ),
+    )
 
 
 class MediaResult(BaseModel):
@@ -66,7 +73,9 @@ class RecommendRequest(BaseModel):
         max_length=1000,
         description="Natural-language description of the mood, vibe, or theme you want a recommendation for.",
     )
-    type: MediaTypeFilter = Field("ALL", description="Restrict the recommendation to ANIME, MANGA, or ALL.")
+    type: MediaTypeFilter = Field(
+        ..., description="ANIME or MANGA -- required, no combined/ALL option (see VibeSearchRequest.type)."
+    )
 
 
 class ToolCallLogEntry(BaseModel):
