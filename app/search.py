@@ -39,17 +39,22 @@ async def vibe_search(
     if not state.ready():
         raise RuntimeError("Search backend not initialized yet")
 
-    # SentenceTransformer.encode() and the supabase-py client are both
+    # TextEmbedding.embed() and the supabase-py client are both
     # synchronous/blocking calls. Running them via asyncio.to_thread keeps
     # the event loop free to serve other concurrent requests (REST or MCP)
     # while this one waits on CPU-bound encoding or network I/O.
-    embedding = await asyncio.to_thread(state.model.encode, query)
+    # embed() takes an iterable and returns a generator, even for a
+    # single string -- there's no single-text convenience method.
+    def _encode() -> list[float]:
+        return next(iter(state.model.embed([query]))).tolist()
+
+    embedding = await asyncio.to_thread(_encode)
 
     def _call_rpc() -> list[dict[str, Any]]:
         response = state.supabase.rpc(
             "match_media",
             {
-                "query_embedding": embedding.tolist(),
+                "query_embedding": embedding,
                 "match_threshold": match_threshold,
                 "match_count": limit,
                 "media_type": media_type,

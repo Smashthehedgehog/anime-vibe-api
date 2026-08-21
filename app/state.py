@@ -1,11 +1,11 @@
 """Shared, process-wide handles for the embedding model and Supabase client.
 
 Both the REST endpoint (app.py) and the MCP tool (mcp_server.py) need the
-same SentenceTransformer instance and the same Supabase client. Loading
-the model is the expensive part of a cold start (reading ~90MB of weights
-off disk and into memory), so it happens exactly once, in FastAPI's
-`lifespan` handler (see app.py), and every request afterwards -- REST or
-MCP -- reads it from here instead of loading its own copy.
+same TextEmbedding instance and the same Supabase client. Loading the
+model is the expensive part of a cold start, so it happens exactly once,
+in FastAPI's `lifespan` handler (see app.py), and every request
+afterwards -- REST or MCP -- reads it from here instead of loading its
+own copy.
 
 This is a plain module-level singleton rather than FastAPI's dependency
 injection (`Depends(...)`) because the MCP tool functions in
@@ -19,13 +19,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from supabase import Client
 
 
 @dataclass
 class AppState:
-    model: Optional[SentenceTransformer] = None
+    model: Optional[TextEmbedding] = None
     supabase: Optional[Client] = None
 
     def ready(self) -> bool:

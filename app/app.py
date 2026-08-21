@@ -10,11 +10,11 @@ Exposes two independent protocols from one process:
     actually looks like on the wire, and docs/MCP.md for how to connect
     a client to it.
 
-Both protocols share one SentenceTransformer instance and one Supabase
+Both protocols share one TextEmbedding instance and one Supabase
 client (see state.py), loaded once at process startup in `lifespan`
 below rather than per-request or lazily on first use -- loading the
 embedding model is the slow part of a cold start, so doing it eagerly at
-startup is what keeps every request (REST or MCP) at sub-150ms.
+startup is what keeps every request (REST or MCP) fast afterwards.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from supabase import create_client
 
 from app import recommend_agent
@@ -51,19 +51,26 @@ logging.basicConfig(
 logger = logging.getLogger("app")
 
 EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+# fastembed's model registry uses the full HF repo id; the env var above
+# stays a bare model name (matches its pre-fastembed value in render.yaml
+# / .env) so this is the only place that needs to know the prefix.
+_FASTEMBED_MODEL_NAME = (
+    EMBEDDING_MODEL_NAME
+    if "/" in EMBEDDING_MODEL_NAME
+    else f"sentence-transformers/{EMBEDDING_MODEL_NAME}"
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Runs once on process start, once on process stop.
 
-    Loading the SentenceTransformer model from disk takes roughly a
-    second. Doing that here -- instead of on the first incoming request
-    -- means every caller gets consistent latency instead of the first
-    request (REST or MCP) silently eating the load time.
+    Doing this here -- instead of on the first incoming request -- means
+    every caller gets consistent latency instead of the first request
+    (REST or MCP) silently eating the load time.
     """
-    logger.info("Loading embedding model %s", EMBEDDING_MODEL_NAME)
-    state.model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    logger.info("Loading embedding model %s", _FASTEMBED_MODEL_NAME)
+    state.model = TextEmbedding(model_name=_FASTEMBED_MODEL_NAME, cache_dir=os.environ.get("HF_HOME"))
 
     logger.info("Connecting to Supabase")
     state.supabase = create_client(

@@ -35,10 +35,9 @@ to `plan: starter` in `render.yaml` for an always-on service.
    is in git. `GROQ_API_KEY` powers the `/api/v1/recommend` agent (see
    [docs/RECOMMEND.md](RECOMMEND.md)) — get one free at
    [console.groq.com](https://console.groq.com).
-4. Deploy. First build takes several minutes (installing `torch` +
-   `sentence-transformers` and downloading the embedding model — see
-   below); later deploys reuse Docker layer caching for anything that
-   didn't change.
+4. Deploy. First build takes a couple minutes (installing dependencies
+   and downloading the embedding model — see below); later deploys reuse
+   Docker layer caching for anything that didn't change.
 5. Once the web service is live, confirm `GET /<service-url>/healthz`
    returns `{"status": "ok"}`, then issue an API key for whatever's
    going to call this (a portfolio frontend, a script, yourself) via
@@ -60,30 +59,64 @@ to `plan: starter` in `render.yaml` for an always-on service.
    back to a full scan) — not a blocker for deploying, just worth
    knowing if search feels slow.
 
+## Why fastembed, not sentence-transformers/torch
+
+This ran on `sentence-transformers` (torch) through 2026-08-21. Real
+production evidence pointed at it as the cause of repeated OOM crashes
+on Render's free 512 MB instance -- including one that happened purely
+during startup, before a single request was served, confirmed via
+Render's own "Ran out of memory (used over 512MB) while running your
+code" event. Measured directly, in the actual Linux base image this
+project builds on (`python:3.11-slim`), not guessed at:
+
+| | `sentence-transformers` (torch) | `fastembed` (onnxruntime) |
+|---|---|---|
+| torch itself | 1.2 GB | -- (not installed) |
+| NVIDIA/CUDA libraries | 2.7 GB (**entirely unused** -- Render's free tier has no GPU) | -- (not installed) |
+| Full image size | ~4+ GB of just these deps | 740 MB total image |
+| Weight-loading time in a live boot log | 33-80s (this was most of every cold start) | sub-second once baked into the image |
+
+The catch with swapping embedding libraries is usually that a
+different model produces a different, incompatible vector space --
+but `fastembed` runs the *exact same* `all-MiniLM-L6-v2` weights
+through ONNX Runtime instead of torch, so this isn't a different
+model, just a lighter runtime for the same one. Verified directly
+before switching: encoding the same text with both libraries produced
+vectors with cosine similarity 1.0000000014 (max per-element
+difference ~1e-7, pure floating-point noise) -- so every embedding
+already stored in `media_metadata` from the old library stayed valid;
+no re-embedding was needed.
+
+Also verified end-to-end, not just at the library level: built the
+real image, ran it with `docker run --memory=512m` (matching Render's
+free-tier limit exactly), and exercised both `/api/v1/search/vibe` and
+`/api/v1/recommend` against it -- memory stayed flat around ~210 MB
+the entire time, including through a full multi-round `/recommend`
+call (the exact request shape that used to OOM).
+
 ## Why the model is pre-downloaded *and* forced offline
 
-`build.sh` imports `SentenceTransformer('all-MiniLM-L6-v2')` once during
-`docker build`, which downloads the weights into `$HF_HOME` and bakes
-them into the image layer. The point is to avoid a network round-trip to
-Hugging Face on every cold start.
+`build.sh` loads a `fastembed.TextEmbedding('sentence-transformers/all-MiniLM-L6-v2')`
+once during `docker build`, which downloads the ONNX weights into
+`$HF_HOME` (passed explicitly as `cache_dir` -- fastembed doesn't read
+`$HF_HOME` on its own) and bakes them into the image layer. The point
+is to avoid a network round-trip to Hugging Face on every cold start.
 
-That alone isn't enough, though: `huggingface_hub` (a `sentence-transformers`
-dependency) still makes a handful of live `HEAD` requests to
-`huggingface.co` on *every* model load — even when the weights are
-already cached — to revalidate that the cache is current. Left as-is,
-that reintroduces the exact network dependency the build-time download
-was meant to remove, and adds real latency (measured: ~1.5-2s of HEAD
-requests during `docker run` before this fix). The Dockerfile sets
-`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` for the runtime
-container (deliberately *not* during the build step, which still needs
-network to fetch the weights the first time) to skip that
-revalidation entirely.
+That alone isn't enough, though: `huggingface_hub` (a `fastembed`
+dependency, same as it was for `sentence-transformers`) still makes a
+handful of live `HEAD` requests to `huggingface.co` on *every* model
+load -- even when the weights are already cached -- to revalidate that
+the cache is current. Left as-is, that reintroduces the exact network
+dependency the build-time download was meant to remove. The Dockerfile
+sets `HF_HUB_OFFLINE=1` for the runtime container (deliberately *not*
+during the build step, which still needs network to fetch the weights
+the first time) to skip that revalidation entirely.
 
 This was verified directly, not assumed: the image was built and run
 locally with `docker run --network none` (networking fully disabled at
-the container level) and the server still started and served
-`/healthz` in about a second — proof startup has no live dependency on
-Hugging Face being reachable.
+the container level) and the model still loaded and encoded correctly
+-- proof startup has no live dependency on Hugging Face being
+reachable.
 
 ## Why a curated 5,000-title catalog
 

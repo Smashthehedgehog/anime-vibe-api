@@ -1,8 +1,9 @@
 """Stage 2: backfill embeddings for media_metadata rows.
 
 Fetches rows with a null embedding, encodes title + synopsis + genres +
-tags with SentenceTransformers (all-MiniLM-L6-v2) in batches, and writes
-the resulting 384-dim vectors back to Supabase.
+tags with fastembed (all-MiniLM-L6-v2, via onnxruntime rather than
+torch -- see docs/DEPLOY.md) in batches, and writes the resulting
+384-dim vectors back to Supabase.
 
 Writes go through the `bulk_update_embeddings` RPC (see
 supabase/migrations/20260730071040_bulk_update_embeddings.sql), not
@@ -28,11 +29,12 @@ from typing import Any
 
 import httpx
 from dotenv import load_dotenv
+from fastembed import TextEmbedding
 from postgrest.exceptions import APIError
-from sentence_transformers import SentenceTransformer
 from supabase import Client, create_client
 
 MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+_FASTEMBED_MODEL_NAME = MODEL_NAME if "/" in MODEL_NAME else f"sentence-transformers/{MODEL_NAME}"
 FETCH_PAGE_SIZE = 500
 ENCODE_BATCH_SIZE = 64
 MAX_ATTEMPTS_PER_SIZE = 3
@@ -167,8 +169,8 @@ def run() -> None:
         os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"]
     )
 
-    logger.info("Loading embedding model %s", MODEL_NAME)
-    model = SentenceTransformer(MODEL_NAME)
+    logger.info("Loading embedding model %s", _FASTEMBED_MODEL_NAME)
+    model = TextEmbedding(model_name=_FASTEMBED_MODEL_NAME, cache_dir=os.environ.get("HF_HOME"))
 
     total = 0
     while True:
@@ -177,9 +179,7 @@ def run() -> None:
             break
 
         contexts = [_build_context(row) for row in rows]
-        embeddings = model.encode(
-            contexts, batch_size=ENCODE_BATCH_SIZE, show_progress_bar=False
-        )
+        embeddings = model.embed(contexts, batch_size=ENCODE_BATCH_SIZE)
 
         updates = [
             {"id": row["id"], "embedding": embedding.tolist()}

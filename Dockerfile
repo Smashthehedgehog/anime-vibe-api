@@ -1,11 +1,13 @@
 # Production image for the FastAPI + MCP server (app/app.py).
 #
 # The one thing worth calling out: build.sh runs `pip install` and then
-# imports SentenceTransformer once, *during the build*, so the
-# all-MiniLM-L6-v2 weights get baked into this image layer instead of
-# being downloaded from Hugging Face on every cold start. HF_HOME below
-# pins where that cache lives so the build step and the running
-# container agree on the path.
+# loads the fastembed model once, *during the build*, so the
+# all-MiniLM-L6-v2 ONNX weights get baked into this image layer instead
+# of being downloaded from Hugging Face on every cold start. HF_HOME
+# below pins where that cache lives so the build step and the running
+# container agree on the path (fastembed doesn't read HF_HOME on its
+# own -- app.py and vector_worker.py both pass it explicitly as
+# TextEmbedding's `cache_dir`).
 #
 # Not used for the cron job (see render.yaml's `dockerCommand`) -- that
 # reuses this same image but runs ingestion_worker.py /
@@ -25,15 +27,14 @@ WORKDIR /app
 COPY requirements.txt build.sh ./
 RUN chmod +x build.sh && ./build.sh
 
-# huggingface_hub still does live ETag-revalidation HEAD requests against
-# huggingface.co on every load *even when the files are already cached*,
-# unless told not to. Left unset, that reintroduces exactly the network
-# round-trip (and dependency on HF being reachable) that baking the
-# weights in at build time was supposed to eliminate. Set only now, after
-# build.sh's initial download needed real network access -- this only
-# affects the runtime container.
-ENV HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1
+# huggingface_hub (a fastembed dependency) still does live ETag-
+# revalidation HEAD requests against huggingface.co on every load *even
+# when the files are already cached*, unless told not to. Left unset,
+# that reintroduces exactly the network round-trip (and dependency on HF
+# being reachable) that baking the weights in at build time was supposed
+# to eliminate. Set only now, after build.sh's initial download needed
+# real network access -- this only affects the runtime container.
+ENV HF_HUB_OFFLINE=1
 
 COPY . .
 

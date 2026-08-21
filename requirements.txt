@@ -1,7 +1,15 @@
 # Stage 1-2: ingestion + vectorization
 supabase>=2.4
 httpx>=0.27
-sentence-transformers>=3.0
+# fastembed runs all-MiniLM-L6-v2 through onnxruntime instead of torch --
+# same model, numerically identical output (cosine similarity ~1.0
+# against the original sentence-transformers library, verified directly),
+# but ~230MB installed vs. sentence-transformers pulling in torch (750MB
+# CPU-only, or ~3.9GB if a CUDA build gets resolved, as it was here). That
+# gap was the actual cause of repeated OOM crashes on Render's 512MB free
+# tier -- torch's own footprint, not anything about search or recommend
+# request handling. See docs/DEPLOY.md.
+fastembed>=0.4
 python-dotenv>=1.0
 
 # Stage 3-4: API + MCP server

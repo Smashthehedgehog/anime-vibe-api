@@ -9,7 +9,9 @@ sentence-embedding similarity with popularity. Exposed both as a REST
 API and as an MCP tool so LLM agents can query it directly.
 
 **Stack:** FastAPI, MCP (SSE transport), Supabase (Postgres + pgvector),
-SentenceTransformers (`all-MiniLM-L6-v2`), Render (Blueprint deploy).
+fastembed (`all-MiniLM-L6-v2` via onnxruntime, not torch — see "Why
+fastembed, not sentence-transformers/torch" in [docs/DEPLOY.md](docs/DEPLOY.md)),
+Render (Blueprint deploy).
 
 ## Status
 

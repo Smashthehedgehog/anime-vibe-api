@@ -63,12 +63,15 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 # on 2026-08-17, a week after the first memory fix (in-process MCP
 # transport + trimmed LLM-facing payloads) -- that fix stopped this from
 # failing on *every* call, but real traffic still occasionally exceeded
-# the container's memory a week later. The embedding model + torch
-# alone already consume a large share of that 512 MB baseline (shared
-# with Direct Search too, which hasn't shown this problem), leaving
-# thin headroom for this endpoint's own per-request growth. Fewer
-# rounds and a lower per-call result count directly cap how large that
-# growth can get.
+# the container's memory a week later. At the time, the embedding
+# model's own runtime (sentence-transformers/torch) was consuming a
+# large, fixed share of that 512 MB baseline, leaving thin headroom for
+# this endpoint's per-request growth on top of it. That baseline issue
+# is now fixed at the source (switched to fastembed/onnxruntime, see
+# docs/DEPLOY.md -- ~210MB peak measured for this exact endpoint under
+# a real docker --memory=512m run, vs. crashing before), but these caps
+# are still worth keeping: they bound worst-case growth regardless of
+# what else the process is doing.
 MAX_TOOL_ROUNDS = 2
 TOP_N = 10
 # How much of each candidate's synopsis to keep in the LLM's own message
