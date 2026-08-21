@@ -141,7 +141,7 @@
     <label id="method-1-label" class="active">
       <input type="radio" name="method" value="search" checked />
       <strong>Direct search</strong>
-      <span>Ranked list from cosine similarity + popularity. Deterministic, no LLM.</span>
+      <span>Ranked by score -- 85% semantic similarity to your vibe, 15% popularity. Deterministic, no LLM.</span>
     </label>
     <label id="method-2-label">
       <input type="radio" name="method" value="recommend" />
@@ -223,9 +223,7 @@ function mediaCardHtml(r, { highlight = false, showScore = true, badge = null, r
     : '<span style="opacity:0.5">No synopsis.</span>';
   const tags = [...(r.genres || []), ...(r.tags || [])].slice(0, 8).join(" · ");
   const scoreHtml = showScore ? `<span class="score">score ${r.score.toFixed(3)}</span>` : "";
-  const metaHtml = showScore
-    ? `<div class="meta">popularity ${r.popularity} &middot; similarity ${r.similarity.toFixed(3)}</div>`
-    : `<div class="meta">popularity ${r.popularity}</div>`;
+  const metaHtml = `<div class="meta">popularity ${r.popularity}</div>`;
   const reasonHtml = reason ? `<p class="reason">${escapeHtml(reason)}</p>` : "";
 
   return `
