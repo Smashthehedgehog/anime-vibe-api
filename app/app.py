@@ -113,8 +113,23 @@ app.add_middleware(
 )
 
 
-@app.get("/healthz", tags=["meta"])
+@app.api_route("/healthz", methods=["GET", "HEAD"], tags=["meta"])
 async def healthz() -> dict:
+    """Readiness check -- deliberately supports HEAD as well as GET.
+
+    Uptime monitors (e.g. UptimeRobot) commonly send HEAD requests to
+    avoid transferring a response body. `@app.get(...)` alone doesn't
+    cover that: unlike plain Starlette routes, FastAPI's `APIRoute`
+    does not auto-add HEAD support for a GET route (confirmed directly
+    against fastapi==0.141.1 / starlette==1.3.1's source -- Starlette's
+    own `Route.__init__` does this, but FastAPI's `_populate_api_route_state`
+    reimplements the same method-set logic without that line). Without
+    this, a HEAD request to /healthz doesn't fully match this route, so
+    it falls through to the ASGI-mounted MCP app below (which matches
+    by path prefix regardless of method) and gets rejected there with
+    401 for missing an API key -- confirmed live: monitors were getting
+    intermittent 401s while GET requests to the same URL worked fine.
+    """
     return {"status": "ok" if state.ready() else "starting"}
 
 
